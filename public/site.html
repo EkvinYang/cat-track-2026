@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Site Command Center</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700&family=Barlow+Condensed:wght@600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/app.css">
+  <style>
+    .controls { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 14px; }
+    .controls h1 { font-size: 28px; margin-right: auto; }
+    .col { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+    .col > .panel { min-height: 0; }
+    .tall { max-height: 640px; }
+    .alert-actions { display: flex; gap: 6px; margin-top: 10px; flex-wrap: wrap; }
+    .aud { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 8px; }
+    .aud span { font-size: 11px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--muted); background: #0f1113; border: 1px solid var(--line); border-radius: 6px; padding: 1px 6px; }
+    .act-group h4 { font-size: 12px; text-transform: uppercase; letter-spacing: .1em; color: var(--yellow); margin: 12px 0 6px; }
+    .act-group:first-child h4 { margin-top: 0; }
+    .act-item { display: flex; gap: 10px; align-items: flex-start; padding: 8px 10px; border-radius: 10px; background: var(--panel-2); border: 1px solid var(--line); cursor: pointer; }
+    .act-item + .act-item { margin-top: 6px; }
+    .act-item .box { width: 20px; height: 20px; border-radius: 6px; border: 2px solid #4a5058; flex: none; display: grid; place-items: center; margin-top: 1px; }
+    .act-item.done { opacity: .5; }
+    .act-item.done .txt { text-decoration: line-through; }
+    .act-item.done .box { background: var(--low); border-color: var(--low); color: #04140c; }
+    .act-item .meta { font-size: 12px; color: var(--faint); margin-top: 2px; }
+    .fleet { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
+    .tile { display: block; background: var(--panel-2); border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; color: var(--text); transition: border-color .2s, transform .1s; }
+    .tile:hover { border-color: var(--yellow); text-decoration: none; }
+    .tile.down { border-color: rgba(255,77,79,.6); }
+    .tile.attention { border-color: rgba(255,138,31,.5); }
+    .tile .id { font-family: var(--font-cond); font-weight: 800; font-size: 19px; letter-spacing: .04em; }
+    .tile .m { font-size: 13px; color: var(--muted); }
+    .tile .tele { font-size: 12px; color: var(--info); margin-top: 6px; min-height: 16px; }
+    .feed-item { display: flex; gap: 10px; padding: 9px 0; border-bottom: 1px solid var(--line); }
+    .feed-item:last-child { border-bottom: none; }
+    .feed-item .src { width: 32px; height: 32px; border-radius: 9px; display: grid; place-items: center; background: var(--panel-2); border: 1px solid var(--line); flex: none; color: var(--yellow); }
+    .feed-item .src.telemetry { color: var(--info); }
+    .feed-item .src.repair { color: var(--low); }
+    .feed-item .q { color: var(--muted); font-size: 13px; margin-top: 2px; }
+    .ask-log { max-height: 260px; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; margin-bottom: 10px; }
+    .bubble { padding: 9px 12px; border-radius: 12px; font-size: 14px; max-width: 92%; }
+    .bubble.me { align-self: flex-end; background: var(--yellow); color: var(--yellow-ink); font-weight: 600; }
+    .bubble.bot { align-self: flex-start; background: var(--panel-2); border: 1px solid var(--line); }
+    .trace { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+    .trace span { font-size: 11px; font-family: ui-monospace, Menlo, monospace; color: var(--purple); background: rgba(180,140,255,.08); border: 1px solid rgba(180,140,255,.3); border-radius: 6px; padding: 1px 6px; }
+  </style>
+</head>
+<body>
+  <div id="top"></div>
+  <div class="page">
+    <div class="controls">
+      <h1>Site Command Center</h1>
+      <select class="select" id="siteSel" style="width:auto;min-width:240px"></select>
+      <label class="switch" title="Simulate live machine telemetry"><input type="checkbox" id="teleToggle"><span class="track"></span>Live telemetry</label>
+    </div>
+    <div class="kpis" id="kpis" style="margin-bottom:16px"></div>
+    <div class="grid-3">
+      <div class="col">
+        <div class="panel">
+          <div class="panel-head"><h3>Alerts</h3><span class="muted" id="alertCount" style="font-size:13px"></span></div>
+          <div class="panel-body scroll tall" id="alerts"></div>
+        </div>
+      </div>
+      <div class="col">
+        <div class="panel">
+          <div class="panel-head"><h3>Crew action items</h3><span class="muted" id="actCount" style="font-size:13px"></span></div>
+          <div class="panel-body scroll" style="max-height:420px" id="actions"></div>
+        </div>
+        <div class="panel">
+          <div class="panel-head"><h3>Ask Cat Track</h3><span class="pill sev-info" id="aiMode"></span></div>
+          <div class="panel-body">
+            <div class="ask-log" id="askLog"><div class="bubble bot">Ask about any machine, pattern or the fleet — or ask me to assign a task or notify a crew.</div></div>
+            <form class="row" id="askForm"><input class="input" id="askInput" placeholder="e.g. Which machines are at risk this week?" autocomplete="off"><button class="btn primary">Ask</button></form>
+            <div class="chips" style="margin-top:8px" id="askChips"></div>
+          </div>
+        </div>
+      </div>
+      <div class="col">
+        <div class="panel">
+          <div class="panel-head"><h3>Fleet on site</h3><span class="muted" style="font-size:13px" id="fleetCount"></span></div>
+          <div class="panel-body"><div class="fleet" id="fleet"></div></div>
+        </div>
+        <div class="panel">
+          <div class="panel-head"><h3>Live memory feed</h3><span class="muted" style="font-size:13px" id="graphStat"></span></div>
+          <div class="panel-body scroll" style="max-height:440px" id="feed"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <script src="/js/common.js"></script>
+  <script src="/js/site.js"></script>
+</body>
+</html>

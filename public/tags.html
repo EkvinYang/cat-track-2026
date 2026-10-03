@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Asset QR Tags</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700&family=Barlow+Condensed:wght@600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/app.css">
+  <style>
+    .tags { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 16px; }
+    .tag { background: #fff; color: #111; border-radius: 16px; overflow: hidden; border: 3px solid var(--yellow); display: flex; flex-direction: column; }
+    .tag .hd { background: var(--yellow); color: var(--yellow-ink); padding: 8px 12px; display: flex; justify-content: space-between; align-items: center; font-family: var(--font-cond); font-weight: 800; letter-spacing: .08em; }
+    .tag .bd { padding: 12px; text-align: center; }
+    .tag img { width: 100%; max-width: 200px; aspect-ratio: 1; display: block; margin: 0 auto; }
+    .tag .id { font-family: var(--font-cond); font-size: 32px; font-weight: 800; letter-spacing: .06em; line-height: 1; margin-top: 6px; }
+    .tag .md { font-size: 14px; color: #444; margin-top: 3px; }
+    .tag .ft { font-size: 11px; color: #777; padding: 0 12px 10px; text-align: center; }
+    @media print {
+      .topbar, .noprint { display: none !important; }
+      body { background: #fff; }
+      .page { padding: 0; }
+      .tags { grid-template-columns: repeat(3, 1fr); gap: 10px; }
+      .tag { break-inside: avoid; }
+    }
+  </style>
+</head>
+<body>
+  <div id="top"></div>
+  <div class="page">
+    <div class="row spread wrap noprint" style="margin-bottom:14px">
+      <div><h1 style="font-size:28px">Asset QR tags</h1><p class="muted" style="margin:4px 0 0">Stick one on each machine. Scanning with the operator panel (or any phone camera) opens that unit's report screen.</p></div>
+      <div class="row"><span class="muted" style="font-size:13px" id="base"></span><button class="btn primary" onclick="window.print()">Print tags</button></div>
+    </div>
+    <div class="tags" id="tags"></div>
+  </div>
+  <script src="/js/common.js"></script>
+  <script>
+    (async function () {
+      const { api, esc, topbar, connectStream } = CT;
+      document.getElementById('top').innerHTML = topbar('/tags');
+      connectStream({}, document.getElementById('live'));
+      const [assets, pub] = await Promise.all([api('/api/assets'), api('/api/public-url')]);
+      document.getElementById('base').textContent = `Links to ${pub.url}`;
+      document.getElementById('tags').innerHTML = assets.map((a) => {
+        const url = `${pub.url}/operator?unit=${encodeURIComponent(a.id)}`;
+        return `<div class="tag"><div class="hd"><span>CAT TRACK</span><span>${esc(a.site_id)}</span></div>
+          <div class="bd"><img src="/api/qr.svg?data=${encodeURIComponent(url)}" alt="QR for ${esc(a.id)}"><div class="id">${esc(a.id)}</div><div class="md">${esc(a.model)} ${esc(a.family)}</div></div>
+          <div class="ft">S/N ${esc(a.serial)} · scan to report an issue</div></div>`;
+      }).join('');
+    })();
+  </script>
+</body>
+</html>

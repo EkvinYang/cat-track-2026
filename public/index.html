@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Cat Track</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700&family=Barlow+Condensed:wght@600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/app.css">
+  <style>
+    .hero { display: grid; grid-template-columns: 1.4fr 1fr; gap: 24px; align-items: center; padding: 28px 0 10px; }
+    .hero h1 { font-size: clamp(40px, 6vw, 72px); line-height: .95; font-weight: 800; }
+    .hero h1 span { color: var(--yellow); }
+    .hero p.lead { font-size: 19px; color: var(--muted); max-width: 640px; margin: 16px 0 0; }
+    .qr-card { padding: 20px; text-align: center; }
+    .qr-card img { width: min(240px, 70vw); aspect-ratio: 1; background: #fff; border-radius: 14px; padding: 8px; }
+    .qr-card .url { font-size: 13px; word-break: break-all; margin-top: 8px; }
+    .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 14px; margin-top: 26px; }
+    .nav-card { display: block; padding: 18px; border-radius: 16px; background: var(--panel); border: 1px solid var(--line); color: var(--text); transition: border-color .2s, transform .15s; }
+    .nav-card:hover { border-color: var(--yellow); transform: translateY(-2px); text-decoration: none; }
+    .nav-card .ic { width: 44px; height: 44px; border-radius: 12px; background: rgba(255,205,17,.12); color: var(--yellow); display: grid; place-items: center; }
+    .nav-card .ic svg { width: 24px; height: 24px; }
+    .nav-card h3 { font-size: 22px; margin-top: 12px; }
+    .nav-card p { color: var(--muted); font-size: 14px; margin: 6px 0 0; }
+    .flow { display: grid; grid-template-columns: repeat(7, 1fr); gap: 8px; margin-top: 30px; }
+    .flow .st { padding: 12px; border-radius: 12px; background: var(--panel); border: 1px solid var(--line); position: relative; }
+    .flow .st b { display: block; font-family: var(--font-cond); font-size: 17px; }
+    .flow .st span { color: var(--muted); font-size: 13px; }
+    .flow .st .n { font-family: var(--font-cond); color: var(--yellow); font-weight: 800; font-size: 13px; letter-spacing: .1em; }
+    @media (max-width: 1100px) { .flow { grid-template-columns: repeat(2, 1fr); } }
+    @media (max-width: 860px) { .hero { grid-template-columns: 1fr; } }
+    .status-row { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 18px; }
+  </style>
+</head>
+<body>
+  <div id="top"></div>
+  <div class="page">
+    <section class="hero">
+      <div>
+        <h1>Every machine<br>gets a <span>memory.</span></h1>
+        <p class="lead">Cat Track turns voice notes, telemetry, inspections and repairs into an ever-growing knowledge graph — so job sites get alerted, crews get the fix that worked last time, and CAT engineers see fleet-wide failure patterns as they emerge.</p>
+        <div class="status-row" id="status"></div>
+      </div>
+      <div class="panel qr-card">
+        <h3>Scan to open the operator panel</h3>
+        <img id="qr" alt="QR code linking to the operator panel">
+        <div class="url muted" id="pubUrl">…</div>
+        <div class="faint" style="font-size:12px;margin-top:6px" id="pubHint"></div>
+      </div>
+    </section>
+
+    <div class="cards" id="cards"></div>
+
+    <div class="flow" id="flow"></div>
+    <div class="footer-note">Cat Track · hackathon prototype for the Cat "Memory for Physical AI" track · all machines, people and history are demo data</div>
+  </div>
+  <script src="/js/common.js"></script>
+  <script>
+    (async function () {
+      const { api, esc, icon, topbar, connectStream } = CT;
+      document.getElementById('top').innerHTML = topbar('/');
+      connectStream({}, document.getElementById('live'));
+      const cards = [
+        ['/operator', 'mic', 'Operator Panel', 'Phone-first. Scan the machine tag, tap the big button, say what\'s wrong. Get guidance back instantly.'],
+        ['/site', 'alert', 'Site Command Center', 'Live alerts, crew action items, fleet health and the memory feed for every job site.'],
+        ['/engineering', 'wrench', 'CAT Engineering', 'Fleet-wide failure patterns with field evidence. Push quick fixes to crews and plan product updates.'],
+        ['/graph', 'graph', 'Knowledge Graph', 'The fleet\'s memory as a living map — watch it grow as reports arrive.'],
+        ['/tags', 'qr', 'Asset QR Tags', 'Printable tags that open each machine\'s report screen.'],
+      ];
+      document.getElementById('cards').innerHTML = cards.map(([h, ic, t, d]) => `<a class="nav-card" href="${h}"><div class="ic">${icon(ic)}</div><h3>${t}</h3><p>${d}</p></a>`).join('');
+      const flow = [['Capture', 'Voice, photos, telemetry, repairs'], ['Understand', 'Parts, symptoms, codes, conditions'], ['Remember', 'Knowledge graph per machine & fleet'], ['Recall', 'Similar events + fixes that worked'], ['Alert', 'Right people on site, with actions'], ['Escalate', 'Mechanical failures → CAT engineers'], ['Learn', 'Field outcomes re-rank every fix']];
+      document.getElementById('flow').innerHTML = flow.map(([b, s], i) => `<div class="st"><div class="n">0${i + 1}</div><b>${b}</b><span>${s}</span></div>`).join('');
+      try {
+        const [h, pub] = await Promise.all([api('/api/health'), api('/api/public-url')]);
+        const url = `${pub.url}/operator`;
+        document.getElementById('qr').src = `/api/qr.svg?data=${encodeURIComponent(url)}`;
+        document.getElementById('pubUrl').innerHTML = `<a href="${esc(url)}">${esc(url)}</a>`;
+        document.getElementById('pubHint').textContent = pub.kind === 'ngrok' ? 'Public HTTPS tunnel — mic & camera work on any phone.' : pub.kind === 'lan' ? 'Local network link — start the ngrok tunnel for mic/camera on phones (they need HTTPS).' : '';
+        document.getElementById('status').innerHTML = `<span class="chip">${icon('brain')} AI: <b>${h.ai === 'claude' ? 'Claude (' + esc(h.model) + ')' : 'offline rule engine'}</b></span><span class="chip">${icon('graph')} <b>${h.graph.nodes}</b> nodes · <b>${h.graph.edges}</b> links</span>`;
+      } catch (err) { document.getElementById('pubUrl').textContent = err.message; }
+    })();
+  </script>
+</body>
+</html>

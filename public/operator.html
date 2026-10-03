@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0c0d0f">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <title>Cat Track Operator</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700&family=Barlow+Condensed:wght@600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/app.css">
+  <style>
+    body { padding-bottom: env(safe-area-inset-bottom); }
+    .op-top { position: sticky; top: 0; z-index: 30; display: flex; align-items: center; gap: 10px; padding: 10px 16px; padding-top: max(10px, env(safe-area-inset-top)); background: rgba(12,13,15,.94); backdrop-filter: blur(8px); border-bottom: 1px solid var(--line); }
+    .op-top .brand { font-size: 18px; }
+    .op-top .brand small { display: inline; font-size: 13px; }
+    .icon-btn { width: 40px; height: 40px; border-radius: 10px; display: grid; place-items: center; border: 1px solid var(--line); background: var(--panel-2); cursor: pointer; }
+    .me-chip { display: inline-flex; align-items: center; gap: 8px; padding: 7px 11px; border-radius: 999px; background: var(--panel-2); border: 1px solid var(--line); font-weight: 600; font-size: 14px; cursor: pointer; max-width: 46vw; }
+    .me-chip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    main { max-width: 640px; margin: 0 auto; padding: 14px 16px 30px; }
+    section.blk { margin-bottom: 16px; }
+    .unit-row { display: flex; gap: 10px; }
+    .unit-row .input { font-family: var(--font-cond); font-size: 26px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; padding: 12px 14px; height: 60px; }
+    .scan-btn { height: 60px; min-width: 96px; border-radius: 12px; font-size: 16px; flex-direction: column; gap: 2px; padding: 6px 12px; }
+    .scan-btn svg { width: 26px; height: 26px; }
+    .recent { margin-top: 10px; }
+    .recent .chip { cursor: pointer; font-family: var(--font-cond); font-weight: 700; letter-spacing: .05em; font-size: 15px; padding: 7px 12px; }
+    .unit-card { padding: 16px; }
+    .unit-head { display: flex; gap: 12px; align-items: flex-start; }
+    .unit-ico { width: 54px; height: 54px; border-radius: 12px; background: var(--yellow); color: var(--yellow-ink); display: grid; place-items: center; flex: none; }
+    .unit-ico svg { width: 34px; height: 34px; stroke-width: 1.8; }
+    .unit-model { font-family: var(--font-cond); font-size: 26px; font-weight: 800; line-height: 1.05; }
+    .unit-sub { color: var(--muted); font-size: 14px; margin-top: 2px; }
+    .meta-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 14px; }
+    .meta { background: var(--panel-2); border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; }
+    .meta .k { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .09em; font-weight: 700; }
+    .meta .v { font-family: var(--font-cond); font-size: 20px; font-weight: 700; line-height: 1.15; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .mem-list { margin: 12px 0 0; padding: 0; list-style: none; }
+    .mem-list li { display: flex; gap: 8px; padding: 8px 10px; border-radius: 10px; background: var(--panel-2); border: 1px solid var(--line); font-size: 14px; }
+    .mem-list li + li { margin-top: 6px; }
+    .mem-list li.high { border-color: rgba(255,138,31,.55); }
+    .mem-list li .icon { color: var(--yellow); margin-top: 2px; }
+    .dictate-wrap { display: flex; flex-direction: column; align-items: center; padding: 22px 16px 16px; }
+    .dictate { position: relative; width: min(64vw, 220px); height: min(64vw, 220px); border-radius: 50%; border: none; background: radial-gradient(circle at 35% 30%, #ffe066, var(--yellow) 55%, #e0b200); color: var(--yellow-ink); cursor: pointer; display: grid; place-items: center; box-shadow: 0 14px 40px rgba(255, 205, 17, .25), inset 0 -6px 16px rgba(0,0,0,.18); transition: transform .1s ease; -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
+    .dictate:active { transform: scale(.97); }
+    .dictate svg { width: 42%; height: 42%; stroke-width: 1.8; }
+    .dictate .lab { position: absolute; bottom: 17%; font-family: var(--font-cond); font-weight: 800; letter-spacing: .1em; font-size: 15px; text-transform: uppercase; }
+    .dictate.listening { background: radial-gradient(circle at 35% 30%, #ff7b7d, var(--critical) 60%, #c92a2c); color: #fff; animation: breathe 1.6s ease-in-out infinite; }
+    .dictate.listening::before, .dictate.listening::after { content: ''; position: absolute; inset: -10px; border-radius: 50%; border: 3px solid rgba(255,77,79,.55); animation: ring 1.6s ease-out infinite; }
+    .dictate.listening::after { animation-delay: .8s; }
+    .dictate:disabled { filter: grayscale(.8); opacity: .55; cursor: not-allowed; }
+    @keyframes breathe { 50% { transform: scale(1.03); } }
+    @keyframes ring { from { transform: scale(.95); opacity: 1; } to { transform: scale(1.25); opacity: 0; } }
+    .dictate-hint { margin-top: 14px; color: var(--muted); font-size: 14px; text-align: center; min-height: 20px; }
+    .interim { color: var(--yellow); font-style: italic; }
+    .report-box .textarea { font-size: 17px; min-height: 120px; }
+    .tools-row { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+    .photo-prev { display: flex; align-items: center; gap: 10px; margin-top: 10px; }
+    .photo-prev img { width: 64px; height: 64px; object-fit: cover; border-radius: 10px; border: 1px solid var(--line); }
+    .examples { margin-top: 10px; }
+    .examples summary { cursor: pointer; color: var(--muted); font-size: 14px; font-weight: 600; }
+    .examples .ex { display: block; width: 100%; text-align: left; margin-top: 6px; background: var(--panel-2); border: 1px dashed var(--line); border-radius: 10px; padding: 9px 11px; font-size: 14px; color: var(--text); cursor: pointer; }
+    .submit { margin-top: 14px; height: 64px; font-size: 20px; font-family: var(--font-cond); letter-spacing: .08em; text-transform: uppercase; }
+    .steps { list-style: none; margin: 0; padding: 0; }
+    .steps li { display: flex; align-items: center; gap: 10px; padding: 7px 0; color: var(--faint); font-weight: 600; transition: color .2s; }
+    .steps li .b { width: 22px; height: 22px; border-radius: 50%; border: 2px solid var(--line); display: grid; place-items: center; flex: none; }
+    .steps li.active { color: var(--text); }
+    .steps li.active .b { border-color: var(--yellow); border-top-color: transparent; animation: spin .8s linear infinite; }
+    .steps li.done { color: var(--text); }
+    .steps li.done .b { border-color: var(--low); background: var(--low); color: #04140c; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .result-banner { border-radius: 14px; padding: 14px 16px; border: 1px solid var(--line); }
+    .result-banner.critical { background: rgba(255,77,79,.14); border-color: rgba(255,77,79,.5); }
+    .result-banner.high { background: rgba(255,138,31,.12); border-color: rgba(255,138,31,.45); }
+    .result-banner.medium { background: rgba(255,205,17,.09); border-color: rgba(255,205,17,.4); }
+    .result-banner.low { background: rgba(62,207,142,.09); border-color: rgba(62,207,142,.35); }
+    .result-banner .h { font-family: var(--font-cond); font-size: 23px; font-weight: 800; line-height: 1.15; margin-top: 6px; }
+    .guidance { font-size: 17px; margin-top: 8px; line-height: 1.4; }
+    .res-sec { margin-top: 14px; }
+    .res-sec h4 { font-size: 13px; text-transform: uppercase; letter-spacing: .1em; color: var(--muted); margin-bottom: 8px; }
+    .route { display: flex; gap: 10px; padding: 9px 11px; border-radius: 10px; background: var(--panel-2); border: 1px solid var(--line); }
+    .route + .route { margin-top: 6px; }
+    .route .icon { color: var(--yellow); margin-top: 3px; }
+    .act { display: flex; gap: 8px; font-size: 14px; padding: 6px 0; border-bottom: 1px solid var(--line); }
+    .act:last-child { border-bottom: none; }
+    .act .who { flex: none; font-size: 11px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; color: var(--yellow); min-width: 84px; padding-top: 2px; }
+    .sim { padding: 9px 11px; border-radius: 10px; background: var(--panel-2); border: 1px solid var(--line); font-size: 14px; }
+    .sim + .sim { margin-top: 6px; }
+    .fix-card { padding: 12px; border-radius: 12px; border: 1px solid rgba(62,207,142,.45); background: rgba(62,207,142,.07); }
+    .conf { height: 6px; border-radius: 99px; background: #262a2f; overflow: hidden; margin-top: 8px; }
+    .conf i { display: block; height: 100%; background: var(--low); }
+    .graph-note { display: flex; gap: 10px; align-items: center; padding: 10px 12px; border-radius: 10px; background: rgba(180,140,255,.08); border: 1px solid rgba(180,140,255,.35); font-size: 14px; }
+    .feed .alert-card { padding: 10px 12px 10px 16px; }
+    .feed .alert-card .t { font-size: 14px; }
+    /* QR scanner */
+    .scanner { position: fixed; inset: 0; z-index: 90; background: #000; display: flex; flex-direction: column; }
+    .scanner video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+    .scanner .frame { position: absolute; left: 50%; top: 45%; width: min(70vw, 300px); height: min(70vw, 300px); transform: translate(-50%, -50%); border-radius: 22px; box-shadow: 0 0 0 9999px rgba(0,0,0,.55); border: 3px solid var(--yellow); }
+    .scanner .frame::after { content: ''; position: absolute; left: 8%; right: 8%; height: 2px; background: var(--yellow); top: 50%; box-shadow: 0 0 12px var(--yellow); animation: scanline 2s ease-in-out infinite; }
+    @keyframes scanline { 0%,100% { top: 12%; } 50% { top: 88%; } }
+    .scanner .bar { position: relative; z-index: 2; display: flex; justify-content: space-between; align-items: center; padding: 14px 16px; padding-top: max(14px, env(safe-area-inset-top)); color: #fff; }
+    .scanner .msg { position: absolute; z-index: 2; left: 16px; right: 16px; bottom: max(28px, env(safe-area-inset-bottom)); text-align: center; color: #fff; font-weight: 600; }
+    .people-list button { display: flex; width: 100%; align-items: center; gap: 10px; text-align: left; padding: 11px 12px; border-radius: 10px; border: 1px solid var(--line); background: var(--panel-2); cursor: pointer; margin-top: 6px; }
+    .people-list button.sel { border-color: var(--yellow); }
+  </style>
+</head>
+<body>
+  <header class="op-top">
+    <a class="brand" href="/"><span class="mark">CT</span>CAT TRACK <small>Operator</small></a>
+    <div class="grow"></div>
+    <button class="icon-btn" id="ttsBtn" title="Read responses aloud" aria-label="Toggle spoken responses"></button>
+    <button class="me-chip" id="meChip" aria-label="Choose who is reporting"></button>
+    <span class="live" id="live" title="Live connection"><span class="dot"></span></span>
+  </header>
+
+  <main>
+    <!-- 1. Unit identification -->
+    <section class="blk">
+      <label class="lbl" for="unitInput">Unit ID</label>
+      <div class="unit-row">
+        <input id="unitInput" class="input" placeholder="EX-0412" autocomplete="off" autocapitalize="characters" spellcheck="false" enterkeyhint="go" maxlength="40">
+        <button class="btn primary scan-btn" id="scanBtn" aria-label="Scan machine QR code"></button>
+      </div>
+      <div class="recent chips" id="recentUnits"></div>
+      <div class="muted hidden" id="unitError" style="margin-top:8px;color:#ff9a9b"></div>
+    </section>
+
+    <!-- 2. Unit data -->
+    <section class="blk panel unit-card hidden" id="unitCard"></section>
+
+    <!-- 3. Dictate / report -->
+    <section class="blk panel report-box" id="reportBox">
+      <div class="dictate-wrap">
+        <button class="dictate" id="dictateBtn" aria-label="Tap to dictate"></button>
+        <div class="dictate-hint" id="dictateHint">Tap and describe what you see, hear or feel.</div>
+      </div>
+      <div class="panel-body">
+        <label class="lbl" for="reportText">Report</label>
+        <textarea id="reportText" class="textarea" placeholder="e.g. &quot;Hydraulic oil leaking near the boom foot, hose looks like it's rubbing on the frame.&quot;"></textarea>
+        <div class="tools-row">
+          <label class="btn sm" for="photoInput" id="photoBtn"></label>
+          <input type="file" id="photoInput" accept="image/*" capture="environment" class="hidden">
+          <button class="btn sm ghost" id="clearBtn" type="button">Clear</button>
+        </div>
+        <div class="photo-prev hidden" id="photoPrev"><img alt="Attached photo"><span class="muted">Photo attached</span><button class="btn sm ghost" id="photoRemove" type="button">Remove</button></div>
+        <details class="examples">
+          <summary>Try an example report</summary>
+          <button class="ex" type="button">Hydraulic oil leaking again from the boom hose near the frame bracket, dripping pretty steady. Hot day out here.</button>
+          <button class="ex" type="button">Engine running hot on the haul road climb, coolant temp warning came on, code CID 110 FMI 15. Really dusty today.</button>
+          <button class="ex" type="button">Grinding noise from the left track idler when turning, getting worse since yesterday.</button>
+          <button class="ex" type="button">Soft ground near the trench edge on the north side, bucket almost slid in. Keep machines back.</button>
+          <button class="ex" type="button">Replaced the fuel filter and cleared the water separator, machine running smooth.</button>
+        </details>
+        <button class="btn primary block submit" id="submitBtn" disabled></button>
+      </div>
+    </section>
+
+    <!-- 4. Processing + result -->
+    <section class="blk panel panel-pad hidden" id="progressBox">
+      <ul class="steps" id="steps"></ul>
+    </section>
+    <section class="blk panel panel-pad hidden" id="resultBox"></section>
+
+    <!-- 5. Live site alerts -->
+    <section class="blk panel">
+      <div class="panel-head"><h3 id="feedTitle">Live site alerts</h3><span class="muted" style="font-size:13px" id="feedCount"></span></div>
+      <div class="panel-body feed" id="feed"><div class="empty">Load a unit to see alerts for its job site.</div></div>
+    </section>
+    <div class="footer-note">Cat Track · hackathon prototype · demo data</div>
+  </main>
+
+  <script src="/vendor/jsqr/jsQR.js" defer></script>
+  <script src="/js/common.js"></script>
+  <script src="/js/operator.js"></script>
+</body>
+</html>

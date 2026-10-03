@@ -1,0 +1,23 @@
+{
+  "name": "cat-track",
+  "version": "1.0.0",
+  "description": "Cat Track - an intelligent memory layer for Caterpillar assets and job sites",
+  "type": "module",
+  "main": "server/index.js",
+  "scripts": {
+    "start": "node server/index.js",
+    "demo": "bash scripts/demo.sh",
+    "reseed": "node server/index.js --reseed"
+  },
+  "engines": {
+    "node": ">=22.13"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.131.0",
+    "express": "^5.2.1",
+    "jsqr": "^1.4.0",
+    "qrcode": "^1.5.4",
+    "vis-network": "^10.1.2"
+  }
+}
