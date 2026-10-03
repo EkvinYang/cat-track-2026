@@ -10,12 +10,16 @@ const QRCode = (await import('qrcode')).default;
 const { q, nowIso, UPLOAD_DIR, alertRow } = await import('./db.js');
 const { sseHandler, publish, clientCount } = await import('./events.js');
 const { getGraph, getNeighborhood, nodeDetail, graphStats, nodeId } = await import('./graph.js');
-const { ingestReport, issueQuickFix, resolveAlert, HttpError, recipientsFor } = await import('./pipeline.js');
+const { ingestReport, issueQuickFix, resolveAlert, resolveFromReport, HttpError, recipientsFor } = await import('./pipeline.js');
 const memory = await import('./memory.js');
 const { ask, analyzeCase } = await import('./agent.js');
+const { acceptUpload, listDocuments, getDocument } = await import('./docs.js');
+const { listReports, listDeleted, deleteReports, restoreReports, editReport, listNotes, addNote, deleteNote } = await import('./history.js');
+const { COMPONENTS, SYMPTOMS, ISSUE_TYPES } = await import('./vocab.js');
+const { graphView } = await import('./graphview.js');
 const { needsSeed, seed } = await import('./seed.js');
 const { setTelemetry, telemetryOn, latestTelemetry } = await import('./telemetry.js');
-const { llmEnabled, MODEL } = await import('./llm.js');
+const { llmEnabled, llmInfo, sttInfo, transcribe } = await import('./llm.js');
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.join(here, '..');
@@ -26,9 +30,10 @@ if (needsSeed()) await seed();
 const app = express();
 app.disable('x-powered-by');
 app.set('trust proxy', true);
-app.use(express.json({ limit: '12mb' }));
+app.use(express.json({ limit: '25mb' }));
 app.use(express.static(path.join(root, 'public'), { extensions: ['html'] }));
 app.use('/uploads', express.static(UPLOAD_DIR));
+app.use('/samples', express.static(path.join(root, 'samples')));
 app.use('/vendor/jsqr', express.static(path.join(root, 'node_modules', 'jsqr', 'dist')));
 app.use('/vendor/vis-network', express.static(path.join(root, 'node_modules', 'vis-network', 'standalone', 'umd')));
 
@@ -36,9 +41,16 @@ const ALERT_ROW = alertRow;
 
 // ---------- system ----------
 app.get('/api/health', (_req, res) => {
-  res.json({ ok: true, ai: llmEnabled() ? 'claude' : 'rules', model: llmEnabled() ? MODEL : null, telemetry: telemetryOn(), clients: clientCount(), graph: graphStats() });
+  const info = llmInfo();
+  res.json({ ok: true, ai: llmEnabled() ? 'llm' : 'rules', provider: info.provider, host: info.host, model: info.model, label: info.label, stt: sttInfo(), telemetry: telemetryOn(), clients: clientCount(), graph: graphStats() });
 });
 app.get('/api/stream', sseHandler);
+
+// Voice notes recorded on the phone, turned into text by the server's speech model.
+app.post('/api/transcribe', express.raw({ type: () => true, limit: '20mb' }), async (req, res) => {
+  res.json(await transcribe(req.body, req.get('content-type') || 'audio/webm'));
+});
+app.get('/api/vocab', (_req, res) => res.json({ components: COMPONENTS.map((c) => c.name), symptoms: SYMPTOMS.map((x) => x.name), issueTypes: ISSUE_TYPES, severities: ['critical', 'high', 'medium', 'low'] }));
 
 async function publicBaseUrl(req) {
   try {
@@ -116,12 +128,38 @@ app.get('/api/reports', (req, res) => {
                   ${site ? 'WHERE r.site_id = ?' : ''} ORDER BY r.created_at DESC LIMIT ?`, ...(site ? [site] : []), limit).map(memory.hydrateReport));
 });
 
+// ---------- report history: browse, delete, restore ----------
+const assetParam = (v) => (v ? memory.normalizeAssetId(v) : null);
+app.get('/api/reports/log', (req, res) => {
+  const { asset, site, person, kind, status, q: search, before, limit } = req.query;
+  res.json(listReports({ assetId: assetParam(asset), siteId: site || null, personId: person || null, kind, status, search, before, limit }));
+});
+app.get('/api/reports/deleted', (req, res) => res.json(listDeleted({ assetId: assetParam(req.query.asset), siteId: req.query.site || null, limit: req.query.limit })));
+app.post('/api/reports/delete', (req, res) => {
+  const { ids, personId, reason, via } = req.body || {};
+  res.json(deleteReports(ids, { personId: personId || null, reason: String(reason || '').slice(0, 300), via: via === 'voice' ? 'voice' : 'manual' }));
+});
+app.post('/api/reports/restore', (req, res) => res.json(restoreReports(req.body?.ids, { personId: req.body?.personId || null })));
+app.patch('/api/reports/:id', (req, res) => {
+  const { personId, ...changes } = req.body || {};
+  const allowed = ['summary', 'severity', 'raw_text', 'part', 'problem', 'issue'];
+  res.json(editReport(Number(req.params.id), Object.fromEntries(Object.entries(changes).filter(([k]) => allowed.includes(k))), { personId: personId || null }));
+});
+app.get('/api/reports/:id/notes', (req, res) => res.json(listNotes(Number(req.params.id))));
+app.post('/api/reports/:id/notes', (req, res) => res.json(addNote(Number(req.params.id), req.body?.text, { personId: req.body?.personId || null })));
+app.delete('/api/reports/:id/notes/:noteId', (req, res) => res.json(deleteNote(Number(req.params.id), Number(req.params.noteId))));
+
+// The operator picked which open issue their "it's fixed" report closes.
+app.post('/api/reports/:id/resolve', (req, res) => {
+  res.json(resolveFromReport(Number(req.params.id), Number(req.body?.alertId), req.body?.personId || null));
+});
+
 // The full path one report took: what it said, what was understood, who was alerted, which case it joined.
 app.get('/api/reports/:id/trace', (req, res) => {
   const id = Number(req.params.id);
   const report = memory.hydrateReport(q.get(`SELECT r.*, p.name AS person_name, p.role AS person_role, a.model, a.family, s.name AS site_name
       FROM reports r LEFT JOIN people p ON p.id = r.person_id LEFT JOIN assets a ON a.id = r.asset_id LEFT JOIN sites s ON s.id = r.site_id WHERE r.id = ?`, id));
-  if (!report) return res.status(404).json({ error: 'Report not found' });
+  if (!report) return res.status(404).json({ error: q.get('SELECT id FROM report_trash WHERE id = ?', id) ? 'This report was deleted. Restore it from the report log to see it again.' : 'Report not found' });
   const alert = alertRow(q.get('SELECT * FROM alerts WHERE report_id = ? ORDER BY id LIMIT 1', id));
   const ids = (report.extraction.similar || []).map((s) => s.id);
   const similar = ids.length ? q.all(`SELECT id, asset_id, created_at, summary FROM reports WHERE id IN (${ids.map(() => '?').join(',')})`, ...ids) : [];
@@ -258,9 +296,22 @@ app.post('/api/cases/:id/status', (req, res) => {
   res.json({ case: c });
 });
 
+// ---------- product library ----------
+app.get('/api/documents', (_req, res) => res.json(listDocuments()));
+app.get('/api/documents/:id', (req, res) => {
+  const d = getDocument(Number(req.params.id));
+  if (!d) return res.status(404).json({ error: 'Document not found' });
+  res.json(d);
+});
+app.post('/api/documents', (req, res) => {
+  const { filename, data, docType, product, uploadedBy } = req.body || {};
+  res.json(acceptUpload({ filename, data, docType, product, uploadedBy }));
+});
+
 // ---------- knowledge graph ----------
 app.get('/api/graph', (req, res) => res.json(getGraph({ includeReports: req.query.reports !== '0' })));
 app.get('/api/graph/stats', (_req, res) => res.json(graphStats()));
+app.get('/api/graph/view', (_req, res) => res.json(graphView()));
 app.get('/api/graph/node', (req, res) => {
   const d = nodeDetail(String(req.query.id || ''));
   if (!d) return res.status(404).json({ error: 'Node not found' });
@@ -283,13 +334,14 @@ app.get('/api/recipients', (req, res) => res.json(recipientsFor(String(req.query
 // ---------- errors ----------
 app.use('/api', (_req, res) => res.status(404).json({ error: 'Not found' }));
 app.use((err, _req, res, _next) => {
-  const status = err instanceof HttpError ? err.status : err.type === 'entity.too.large' ? 413 : 500;
+  const status = err instanceof HttpError ? err.status : err.type === 'entity.too.large' ? 413 : Number.isInteger(err.status) && err.status >= 400 && err.status < 500 ? err.status : 500;
   if (status >= 500) console.error('[error]', err);
-  res.status(status).json({ error: status === 413 ? 'Upload too large (max ~10 MB).' : err.message || 'Server error' });
+  res.status(status).json({ error: status === 413 && err.type === 'entity.too.large' ? 'Upload too large (max 15 MB).' : err.message || 'Server error' });
 });
 
 app.listen(PORT, () => {
   console.log(`\n  Cat Track running → http://localhost:${PORT}`);
-  console.log(`  AI mode: ${llmEnabled() ? `Claude (${MODEL})` : 'offline rule engine (set ANTHROPIC_API_KEY in .env to enable Claude)'}`);
+  const info = llmInfo();
+  console.log(`  AI: ${llmEnabled() ? `${info.model} via ${info.host}` : 'offline rule engine (configure AI_BASE_URL / AI_API_KEY / AI_MODEL in .env)'}`);
   console.log(`  Graph: ${graphStats().nodes} nodes / ${graphStats().edges} edges\n`);
 });

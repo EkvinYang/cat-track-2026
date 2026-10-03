@@ -38,6 +38,17 @@ export function upsertEdge(src, dst, type, delta = null, at = nowIso()) {
   if (delta) delta.edges.push(edge);
 }
 
+/** Update a node's label/props without counting it as a new observation. */
+export function relabelNode(type, key, label, props = {}, delta = null, at = nowIso()) {
+  const id = nodeId(type, key);
+  const existing = q.get('SELECT props, weight FROM nodes WHERE id = ?', id);
+  if (!existing) return upsertNode(type, key, label, props, delta, at);
+  const merged = { ...parseJson(existing.props, {}), ...props };
+  q.run('UPDATE nodes SET label = ?, props = ?, updated_at = ? WHERE id = ?', label, merged, at, id);
+  if (delta) delta.nodes.push({ id, type, label, props: merged, weight: existing.weight, isNew: false });
+  return id;
+}
+
 const toNode = (n) => ({ id: n.id, type: n.type, label: n.label, props: parseJson(n.props, {}), weight: n.weight, created_at: n.created_at });
 const toEdge = (e) => ({ id: e.id, from: e.src, to: e.dst, type: e.type, weight: e.weight });
 

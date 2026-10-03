@@ -1,23 +1,25 @@
 // Operator panel: identify the unit (type / QR), dictate what's happening, and get the
 // machine's memory + crew alerts back in seconds.
 (function () {
-  const { api, esc, ago, dateShort, sevPill, statusPill, healthBar, toast, connectStream, store, icon, machineIcon, emptyState, skeleton, ROLE, modal } = CT;
+  const { topbar, api, esc, ago, dateShort, dateTime, sevPill, statusPill, healthBar, md, toast, undoBar, connectStream, store, icon, machineIcon, emptyState, skeleton, ROLE, SOURCE_LABEL, REPORT_STATUS, modal,
+    clip, problemOf, metaLine, keyFacts, kv, keyRow, dropdown, toneOf, alertDetails, alertTitle } = CT;
   const $ = (id) => document.getElementById(id);
 
   const state = { unit: null, people: [], me: null, photo: null, listening: false, tts: store.get('tts', true), lastResult: null };
 
   // ---------- static chrome ----------
+  $('top').innerHTML = topbar('/operator');
   $('scanBtn').innerHTML = `${icon('qr')}<span>Scan</span>`;
   $('photoBtn').innerHTML = `${icon('camera')} Add photo`;
   $('submitBtn').innerHTML = `${icon('send')} Send to Cat Track`;
-  const renderTts = () => { $('ttsBtn').innerHTML = icon(state.tts ? 'speaker' : 'mute'); $('ttsBtn').style.color = state.tts ? 'var(--yellow)' : 'var(--muted)'; };
+  const renderTts = () => { $('ttsBtn').innerHTML = `${icon(state.tts ? 'speaker' : 'mute')}<span>${state.tts ? 'Reads replies aloud' : 'Replies muted'}</span>`; $('ttsBtn').setAttribute('aria-pressed', String(state.tts)); };
   renderTts();
   $('ttsBtn').onclick = () => { state.tts = !state.tts; store.set('tts', state.tts); renderTts(); if (!state.tts) window.speechSynthesis?.cancel(); toast(state.tts ? 'Spoken responses on' : 'Spoken responses off'); };
 
   // ---------- who is reporting (personalization) ----------
   function renderMe() {
     const p = state.me;
-    $('meChip').innerHTML = `${icon('user')}<span>${p ? esc(p.name.split(' ')[0]) : 'Who?'}</span>`;
+    $('meChip').innerHTML = `${icon('user')}<span>${p ? `Reporting as <b>${esc(p.name)}</b>` : 'Who’s reporting?'}</span>${icon('chevron')}`;
   }
   async function loadPeople() {
     state.people = await api('/api/people');
@@ -32,6 +34,7 @@
       <div class="people-list">${field.map((p) => `<button data-id="${p.id}" class="${state.me?.id === p.id ? 'sel' : ''}"><span><b>${esc(p.name)}</b><br><span class="muted" style="font-size:13px">${ROLE[p.role]}${p.site_name ? ' · ' + esc(p.site_name) : ''}</span></span>${state.me?.id === p.id ? icon('check') : ''}</button>`).join('')}</div>`);
     m.el.querySelectorAll('button[data-id]').forEach((b) => b.onclick = () => {
       state.me = state.people.find((p) => p.id === b.dataset.id); store.set('me', state.me.id); renderMe(); m.close();
+      if (hist.scope === 'mine') { hist.next = null; loadHistory(); }
       toast(`Reporting as ${esc(state.me.name)}`, 'good');
     });
   };
@@ -71,6 +74,7 @@
           state.me = state.people.find((p) => p.id === data.asset.operator_id) || state.me; renderMe();
         }
         loadFeed();
+        hist.next = null; loadHistory();
         if (!quiet) navigator.vibrate?.(30);
         const url = new URL(location.href); url.searchParams.set('unit', data.asset.id); history.replaceState(null, '', url);
       }
@@ -85,7 +89,7 @@
   function renderUnit() {
     const { asset, memory, alerts } = state.unit;
     const since = asset.last_service_hours != null ? Math.round(asset.smu_hours - asset.last_service_hours) : null;
-    const top = memory.filter((m) => m.kind !== 'service').slice(0, 3);
+    const mem = memory.filter((m) => m.kind !== 'service').slice(0, 6);
     $('unitCard').innerHTML = `
       <div class="unit-head">
         <div class="unit-ico">${machineIcon(asset.family)}</div>
@@ -105,12 +109,13 @@
         <div class="meta"><div class="k">Open issues</div><div class="v">${alerts.length}</div></div>
         <div class="meta"><div class="k">Last service</div><div class="v">${dateShort(asset.last_service_at)}</div></div>
         <div class="meta"><div class="k">Since PM</div><div class="v">${since != null ? since + ' h' : '—'}</div></div>
-        <div class="meta"><div class="k">On record</div><div class="v">${state.unit.stats.total} entries</div></div>
+        <div class="meta"><div class="k">On record</div><div class="v"><a href="#history" style="color:inherit">${state.unit.stats.total} entries</a></div></div>
       </div>
-      ${top.length ? `<ul class="mem-list">${top.map((m) => `<li class="${m.level}">${icon(m.kind === 'fleet' ? 'graph' : m.kind === 'bulletin' ? 'wrench' : m.kind === 'pattern' ? 'alert' : 'history')}<span>${esc(m.text)}</span></li>`).join('')}</ul>` : '<ul class="mem-list"><li><span></span><span class="muted">Nothing unusual on record for this machine.</span></li></ul>'}
-      ${alerts.length ? `<div style="margin-top:12px">${alerts.slice(0, 2).map((a) => `<div class="alert-card ${esc(a.severity)}"><div class="t">${esc(a.title)}</div><div class="b">${ago(a.created_at)}</div></div>`).join('')}</div>` : ''}
+      <div style="margin-top:12px">
+        ${alerts.length ? dropdown(`Open issues on ${esc(asset.id)}`, alerts.map((a) => `<div class="issue-line">${sevPill(a.severity)}<span>${esc(alertTitle(a))}</span><span class="faint mono">${ago(a.created_at)}</span></div>`).join(''), { count: alerts.length }) : ''}
+        ${dropdown('What this machine remembers', mem.length ? `<ul class="mem-list">${mem.map((m) => `<li class="${m.level}">${icon(m.kind === 'fleet' ? 'graph' : m.kind === 'bulletin' ? 'wrench' : m.kind === 'pattern' ? 'alert' : m.kind === 'document' ? 'file' : 'history')}<span>${esc(m.text.replace(/ \[D\d+\]$/, ''))}</span></li>`).join('')}</ul>` : '<div class="muted" style="font-size:14px">Nothing unusual on record for this machine.</div>', { count: mem.length })}
+      </div>
       <div class="row spread wrap" style="margin-top:14px;font-size:14px"><span class="muted">Assigned to ${esc(asset.operator_name || 'nobody yet')}</span><a href="/asset?id=${encodeURIComponent(asset.id)}">Full history for ${esc(asset.id)}</a></div>`;
-    $('whereTxt').textContent = asset.site_name.split(' ').slice(0, 2).join(' ');
   }
 
   function renderNoUnit() {
@@ -118,6 +123,7 @@
       <div style="font-weight:600">Which machine are you on?</div>
       <div class="muted" style="font-size:14px;margin-top:4px">There’s a Cat Track tag inside the cab door. Tap <b style="color:var(--ink)">Scan</b> and point your camera at it, or type the unit number printed under the code. It looks like <span class="id" style="color:var(--ink)">EX-0412</span>.</div></div></div>`;
     $('feed').innerHTML = emptyState({ icon: 'pin', title: 'No job site yet', body: 'Alerts for the machine’s site appear here once you pick a machine.' });
+    $('histList').innerHTML = emptyState({ icon: 'history', title: 'No machine picked', body: 'Once you pick a machine, everything reported on it shows up here, newest first.' });
   }
   let allAssets = null;
   async function renderNotFound(raw, message) {
@@ -230,90 +236,245 @@
   }
   $('scanBtn').onclick = startScan;
 
-  // ---------- voice dictation ----------
+  // ---------- voice ----------
+  // Two ways to turn speech into text:
+  //  1. Record on the phone and let the server transcribe it (Whisper on the AI key). Works on
+  //     iPhone, Android, Firefox and desktop browsers, copes with engine noise, knows Cat part names.
+  //  2. The browser's own speech recognition, when the server can't transcribe.
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-  const isAndroid = /Android/i.test(navigator.userAgent);
+  const canRecord = Boolean(window.isSecureContext && navigator.mediaDevices?.getUserMedia && window.MediaRecorder);
+  const isPhone = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
   const dictateBtn = $('dictateBtn');
   const reportText = $('reportText');
-  let rec = null; let baseText = ''; let autoStop = null; let usedVoice = false;
+  let mode = SR ? 'browser' : 'none';
+  let usedVoice = false;
+  state.voice = 'idle'; // idle | starting | recording | transcribing
+  const rec = { stream: null, recorder: null, chunks: [], ctx: null, raf: 0, started: 0, timer: 0, autoStop: 0, speechSeen: false, quietSince: 0, lastBlob: null, sr: null, srBase: '' };
 
-  function renderDictate() {
-    dictateBtn.classList.toggle('listening', state.listening);
-    dictateBtn.innerHTML = `${icon(state.listening ? 'stop' : 'mic')}<span class="lab">${state.listening ? 'Tap to stop' : SR ? 'Tap to talk' : 'Type below'}</span>`;
-    dictateBtn.setAttribute('aria-label', state.listening ? 'Stop dictation' : 'Start dictation');
-  }
   const joinText = (...parts) => parts.map((p) => (p || '').trim()).filter(Boolean).join(' ');
+  const hint = (html) => { $('dictateHint').innerHTML = html; };
+  const clock = () => { const s = Math.floor((Date.now() - rec.started) / 1000); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; };
+  function idleHint() {
+    if (mode !== 'none') hint('Tap, then say what you see, hear or smell. Tap again when you’re done.');
+    else if (!window.isSecureContext) hint('The microphone only works on the secure (https) link. You can type below.');
+    else hint('This browser can’t use the microphone here. Type below, or use the mic key on your keyboard.');
+  }
+  function renderDictate() {
+    const v = state.voice;
+    dictateBtn.classList.toggle('listening', v === 'recording');
+    dictateBtn.classList.toggle('busy', v === 'starting' || v === 'transcribing');
+    dictateBtn.disabled = v === 'starting' || v === 'transcribing' || mode === 'none';
+    const label = v === 'recording' ? `Tap to stop · ${clock()}` : v === 'transcribing' ? 'Writing it down' : v === 'starting' ? 'Opening mic' : mode === 'none' ? 'Type below' : 'Tap to talk';
+    dictateBtn.innerHTML = `${icon(v === 'recording' ? 'stop' : 'mic')}<span class="lab">${label}</span>`;
+    dictateBtn.setAttribute('aria-label', v === 'recording' ? 'Stop recording' : 'Start recording');
+    updateSubmit();
+  }
+  function micError(err) {
+    const n = err?.name || '';
+    if (n === 'NotAllowedError' || n === 'SecurityError') return 'Microphone access is blocked. Allow it for this site in the browser settings (on iPhone: Settings › Safari › Microphone), then tap again.';
+    if (n === 'NotFoundError' || n === 'OverconstrainedError') return 'No microphone found on this device.';
+    if (n === 'NotReadableError' || n === 'AbortError') return 'The microphone is busy in another app (a call or voice memo?). Close it and tap again.';
+    return `Couldn’t open the microphone: ${esc(err?.message || n || 'unknown error')}`;
+  }
 
-  function startDictation() {
-    if (!SR) {
-      reportText.focus();
-      $('dictateHint').textContent = 'This browser can’t listen directly. Tap the box below and use the microphone key on your keyboard instead.';
+  /* ----- 1. record, then transcribe on the server ----- */
+  function pickMime() {
+    for (const t of ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4;codecs=mp4a.40.2', 'audio/mp4', 'audio/aac', 'audio/ogg;codecs=opus']) {
+      try { if (MediaRecorder.isTypeSupported(t)) return t; } catch { /* keep looking */ }
+    }
+    return '';
+  }
+  async function startRecording() {
+    window.speechSynthesis?.cancel();
+    state.voice = 'starting'; renderDictate();
+    // iPhone only lets audio start inside the tap, so the meter's AudioContext is made before awaiting the mic.
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    let ctx = null;
+    try { ctx = Ctx ? new Ctx() : null; } catch { ctx = null; }
+    let stream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 } });
+    } catch (err) {
+      try { ctx?.close(); } catch { /* ignore */ }
+      state.voice = 'idle'; renderDictate(); hint(micError(err));
       return;
     }
+    const mime = pickMime();
+    let recorder;
+    try { recorder = new MediaRecorder(stream, mime ? { mimeType: mime, audioBitsPerSecond: 48000 } : undefined); }
+    catch { try { recorder = new MediaRecorder(stream); } catch { recorder = null; } }
+    if (!recorder) {
+      stream.getTracks().forEach((t) => t.stop()); try { ctx?.close(); } catch { /* ignore */ }
+      mode = SR ? 'browser' : 'none'; state.voice = 'idle'; renderDictate();
+      hint(SR ? 'Recording isn’t supported here, so the browser will listen instead. Tap again.' : 'This browser can’t record audio. Type your report below.');
+      return;
+    }
+    Object.assign(rec, { stream, recorder, ctx, chunks: [], started: Date.now(), speechSeen: false, quietSince: 0 });
+    recorder.ondataavailable = (e) => { if (e.data && e.data.size) rec.chunks.push(e.data); };
+    recorder.onstop = onRecordingStopped;
+    recorder.onerror = (e) => { hint(`Recording stopped: ${esc(e.error?.message || 'unknown error')}`); stopVoice(); };
+    recorder.start(1000); // a chunk every second, so nothing is lost if the phone cuts it short
+    startMeter();
+    state.voice = 'recording';
+    rec.timer = setInterval(() => { const lab = dictateBtn.querySelector('.lab'); if (lab) lab.textContent = `Tap to stop · ${clock()}`; }, 250);
+    rec.autoStop = setTimeout(stopVoice, 120_000);
+    navigator.vibrate?.(25);
+    renderDictate();
+    hint('Listening. Tap again when you’re done; it also stops by itself after a pause.');
+  }
+  // Ring around the button follows your voice, so you can see the mic is hearing you.
+  // A pause of 3.5 s after speaking stops the recording, so gloves can stay on.
+  function startMeter() {
+    const { ctx, stream } = rec;
+    if (!ctx) return;
+    try {
+      ctx.resume?.();
+      const an = ctx.createAnalyser(); an.fftSize = 1024;
+      ctx.createMediaStreamSource(stream).connect(an);
+      const buf = new Uint8Array(an.fftSize);
+      const loop = () => {
+        if (state.voice !== 'recording') return;
+        an.getByteTimeDomainData(buf);
+        let sum = 0;
+        for (let i = 0; i < buf.length; i++) { const v = (buf[i] - 128) / 128; sum += v * v; }
+        const rms = Math.sqrt(sum / buf.length);
+        dictateBtn.style.setProperty('--lvl', Math.min(1, rms * 7).toFixed(3));
+        const now = Date.now();
+        if (rms > 0.045) { rec.speechSeen = true; rec.quietSince = 0; }
+        else if (rec.speechSeen && rms < 0.018 && now - rec.started > 2000) {
+          rec.quietSince ||= now;
+          if (now - rec.quietSince > 3500) { stopVoice(); return; }
+        }
+        rec.raf = requestAnimationFrame(loop);
+      };
+      loop();
+    } catch { /* the meter is a nicety; recording still works without it */ }
+  }
+  function releaseMic() {
+    rec.stream?.getTracks().forEach((t) => t.stop());
+    rec.stream = null;
+    try { rec.ctx?.close(); } catch { /* already closed */ }
+    rec.ctx = null;
+  }
+  async function onRecordingStopped() {
+    releaseMic();
+    const ms = Date.now() - rec.started;
+    const blob = new Blob(rec.chunks, { type: rec.recorder?.mimeType || 'audio/webm' });
+    rec.chunks = [];
+    if (ms < 700 || blob.size < 1000) { state.voice = 'idle'; renderDictate(); hint('That was too short. Tap, talk, then tap again.'); return; }
+    rec.lastBlob = blob;
+    await sendForText(blob);
+  }
+  async function sendForText(blob) {
+    state.voice = 'transcribing'; renderDictate();
+    hint('Writing down what you said…');
+    try {
+      let res;
+      try { res = await fetch('/api/transcribe', { method: 'POST', headers: { 'Content-Type': blob.type || 'audio/webm', 'ngrok-skip-browser-warning': '1' }, body: blob }); }
+      catch { throw new Error('No signal, so the recording couldn’t be sent.'); }
+      let data = null;
+      try { data = await res.json(); } catch { /* not JSON */ }
+      if (!res.ok) throw new Error(data?.error || `The server couldn’t transcribe it (${res.status}).`);
+      if (!data.text) { hint('Didn’t catch any words. Move away from the engine noise and try again.'); rec.lastBlob = null; return; }
+      reportText.value = joinText(reportText.value, data.text);
+      usedVoice = true; rec.lastBlob = null;
+      hint('Got it. Fix anything it misheard, then send.');
+    } catch (err) {
+      hint(`${esc(err.message)} <button class="btn sm" type="button" id="retryVoice">Try again</button>`);
+      $('retryVoice')?.addEventListener('click', () => { if (rec.lastBlob) sendForText(rec.lastBlob); });
+    } finally {
+      if (state.voice === 'transcribing') state.voice = 'idle';
+      renderDictate();
+    }
+  }
+
+  /* ----- 2. the browser's own speech recognition ----- */
+  function startBrowserListening() {
     window.speechSynthesis?.cancel();
-    rec = new SR();
-    rec.lang = 'en-US';
-    rec.interimResults = true;
-    rec.continuous = !isAndroid; // Android Chrome duplicates results in continuous mode; we restart instead.
-    rec.maxAlternatives = 1;
-    baseText = reportText.value;
-    rec.onresult = (e) => {
+    const sr = new SR();
+    rec.sr = sr;
+    sr.lang = 'en-US';
+    sr.interimResults = true;
+    // Phones repeat or never finish results in continuous mode; one phrase at a time, restarted, is reliable.
+    sr.continuous = !isPhone;
+    sr.maxAlternatives = 1;
+    rec.srBase = reportText.value;
+    sr.onresult = (e) => {
       let finalT = ''; let interim = '';
-      for (let i = 0; i < e.results.length; i++) {
-        const r = e.results[i];
-        if (r.isFinal) finalT += r[0].transcript + ' '; else interim += r[0].transcript;
+      if (sr.continuous) {
+        for (let i = 0; i < e.results.length; i++) { const r = e.results[i]; if (r.isFinal) finalT += `${r[0].transcript} `; else interim += r[0].transcript; }
+      } else {
+        // Android repeats earlier words inside later results; the newest result holds the whole phrase.
+        const last = e.results[e.results.length - 1];
+        if (last.isFinal) finalT = last[0].transcript; else interim = last[0].transcript;
       }
-      reportText.value = joinText(baseText, finalT, interim);
+      reportText.value = joinText(rec.srBase, finalT, interim);
+      if (finalT && !sr.continuous) rec.srBase = reportText.value;
       usedVoice = true;
-      $('dictateHint').innerHTML = interim ? `<span class="interim">${esc(interim)}</span>` : 'Listening…';
+      hint(interim ? `<span class="interim">${esc(interim)}</span>` : 'Listening…');
       updateSubmit();
     };
-    rec.onerror = (e) => {
+    sr.onerror = (e) => {
       if (e.error === 'no-speech' || e.error === 'aborted') return;
-      state.listening = false;
-      const msgs = { 'not-allowed': 'Microphone permission was blocked. Allow mic access for this site and try again.', 'service-not-allowed': 'Speech recognition is disabled on this device (on iPhone enable Siri & Dictation). You can use the keyboard mic instead.', network: 'Speech service needs a network connection.', 'audio-capture': 'No microphone found.' };
-      $('dictateHint').textContent = msgs[e.error] || `Voice error: ${e.error}`;
-      renderDictate();
+      const msgs = { 'not-allowed': 'Microphone access is blocked. Allow it for this site and tap again.', 'service-not-allowed': 'Speech recognition is off on this device (on iPhone, turn on Siri & Dictation). You can type instead.', network: 'Speech recognition needs a network connection.', 'audio-capture': 'No microphone found.' };
+      hint(msgs[e.error] || `Voice error: ${esc(e.error)}`);
+      state.voice = 'idle'; renderDictate();
     };
-    rec.onend = () => {
-      baseText = reportText.value;
-      if (state.listening) {
-        try { rec.start(); return; } catch { state.listening = false; }
+    sr.onend = () => {
+      rec.srBase = reportText.value;
+      if (state.voice === 'recording') {
+        // Restart after a short gap; restarting inside onend fails on some phones.
+        setTimeout(() => { if (state.voice !== 'recording') return; try { sr.start(); } catch { stopVoice(); } }, 250);
+        return;
       }
-      clearTimeout(autoStop);
-      renderDictate();
-      if (!/error|blocked|disabled|found|network/i.test($('dictateHint').textContent)) {
-        $('dictateHint').textContent = reportText.value.trim() ? 'Got it. Fix anything it misheard, then send.' : 'Didn’t catch anything. Move away from the engine noise and try again.';
-      }
+      if (!/blocked|off on|needs|found|error/i.test($('dictateHint').textContent)) hint(reportText.value.trim() ? 'Got it. Fix anything it misheard, then send.' : 'Didn’t catch anything. Move away from the engine noise and try again.');
       updateSubmit();
     };
     try {
-      rec.start();
-      state.listening = true;
-      $('dictateHint').textContent = 'Listening…';
+      sr.start();
+      rec.started = Date.now();
+      state.voice = 'recording';
+      rec.timer = setInterval(() => { const lab = dictateBtn.querySelector('.lab'); if (lab) lab.textContent = `Tap to stop · ${clock()}`; }, 250);
+      rec.autoStop = setTimeout(stopVoice, 90_000);
       navigator.vibrate?.(25);
-      clearTimeout(autoStop);
-      autoStop = setTimeout(() => stopDictation(), 90_000);
-    } catch (err) {
-      $('dictateHint').textContent = `Couldn't start the microphone: ${err.message}`;
-    }
+      hint('Listening…');
+    } catch (err) { hint(`Couldn’t start the microphone: ${esc(err.message)}`); }
     renderDictate();
   }
-  function stopDictation() {
-    state.listening = false;
-    clearTimeout(autoStop);
-    try { rec?.stop(); } catch { /* already stopped */ }
-    renderDictate();
-  }
-  dictateBtn.onclick = () => (state.listening ? stopDictation() : startDictation());
-  renderDictate();
-  if (!SR) $('dictateHint').textContent = 'This browser can’t listen directly. Use the microphone key on your keyboard in the box below.';
 
-  reportText.addEventListener('input', updateSubmit);
-  $('clearBtn').onclick = () => { reportText.value = ''; baseText = ''; usedVoice = false; clearPhoto(); updateSubmit(); };
+  function startVoice() {
+    if (state.voice !== 'idle') return;
+    if (mode === 'server') startRecording();
+    else if (mode === 'browser') startBrowserListening();
+    else { reportText.focus(); idleHint(); }
+  }
+  function stopVoice() {
+    if (state.voice !== 'recording') return;
+    clearInterval(rec.timer); clearTimeout(rec.autoStop); cancelAnimationFrame(rec.raf);
+    dictateBtn.style.setProperty('--lvl', '0');
+    if (rec.recorder && rec.recorder.state !== 'inactive') {
+      state.voice = 'transcribing'; renderDictate();
+      try { rec.recorder.stop(); } catch { onRecordingStopped(); }
+      return;
+    }
+    state.voice = 'idle';
+    try { rec.sr?.stop(); } catch { /* already stopped */ }
+    renderDictate();
+  }
+  dictateBtn.onclick = () => (state.voice === 'recording' ? stopVoice() : startVoice());
+  // Switching apps or locking the phone ends the recording cleanly instead of leaving the mic open.
+  document.addEventListener('visibilitychange', () => { if (document.hidden && state.voice === 'recording') stopVoice(); });
+  renderDictate();
+  idleHint();
+  api('/api/health').then((h) => {
+    if (h.stt && canRecord) { mode = 'server'; renderDictate(); idleHint(); }
+  }).catch(() => {});
+
+  reportText.addEventListener('input', () => { if (state.voice === 'recording' && rec.sr) rec.srBase = reportText.value; updateSubmit(); });
+  $('clearBtn').onclick = () => { reportText.value = ''; rec.srBase = ''; usedVoice = false; clearPhoto(); updateSubmit(); };
   document.querySelectorAll('.examples .ex').forEach((b) => b.onclick = () => {
     reportText.value = b.textContent.trim();
-    if (!state.unit) { const pick = /track idler/i.test(b.textContent) ? 'DZ-0107' : /coolant|haul road/i.test(b.textContent) ? 'HT-0761' : /trench/i.test(b.textContent) ? 'EX-0519' : /fuel filter/i.test(b.textContent) ? 'WL-0233' : 'EX-0412'; unitInput.value = pick; loadUnit(pick); }
+    if (!state.unit) { const t = b.textContent; const pick = /idler|track/i.test(t) || /next service/i.test(t) ? 'DZ-0107' : /coolant|haul road|ramp/i.test(t) ? 'HT-0764' : /trench/i.test(t) ? 'EX-0519' : 'EX-0412'; unitInput.value = pick; loadUnit(pick); }
     updateSubmit();
     b.closest('details').open = false;
     reportText.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -338,12 +499,16 @@
 
   // ---------- submit ----------
   function updateSubmit() {
-    const ok = Boolean(state.unit) && reportText.value.trim().length > 2;
+    const talking = state.voice && state.voice !== 'idle';
+    const ok = Boolean(state.unit) && reportText.value.trim().length > 2 && !talking;
     $('submitBtn').disabled = !ok;
-    $('submitBtn').innerHTML = state.unit ? `${icon('send')} Send report on ${esc(state.unit.asset.id)}` : 'Pick a machine first';
+    $('submitBtn').innerHTML = !state.unit ? 'Pick a machine first' : talking ? (state.voice === 'transcribing' ? 'Writing down what you said…' : 'Tap the mic to finish first') : `${icon('send')} Send report on ${esc(state.unit.asset.id)}`;
   }
 
-  const STEPS = ['Reading what you said', 'Filing it under this machine', 'Checking if this has happened before', 'Telling the people on site', 'Deciding whether CAT Engineering needs it'];
+  const STEPS = ['Working out what you need', 'Filing it under this machine', 'Checking what’s open and what’s happened before', 'Doing what you asked', 'Telling the people who need to know'];
+  const INTENT = { new_issue: 'New problem', update_existing: 'Update to an open issue', resolved: 'Marked as fixed', request_advice: 'Asked for advice', request_help: 'Asked for help', question: 'Question', correction: 'Correction', delete_report: 'Delete request', routine_log: 'Routine log' };
+  const DID_ICON = { resolved: 'check', learned: 'history', updated: 'activity', retracted: 'x', deleted: 'x', help: 'user', note: 'alert', case: 'wrench', graph: 'graph' };
+  const plain = (t) => String(t || '').replace(/\*\*|\[[RD]\d+\]/g, '').replace(/\s+/g, ' ').trim();
   function runSteps() {
     $('progressBox').classList.remove('hidden');
     $('steps').innerHTML = STEPS.map((s) => `<li><span class="b"></span>${s}</li>`).join('');
@@ -357,7 +522,7 @@
   }
 
   $('submitBtn').onclick = async () => {
-    if (state.listening) stopDictation();
+    if (state.voice !== 'idle') return;
     const text = reportText.value.trim();
     if (!state.unit || !text) return;
     $('submitBtn').disabled = true;
@@ -367,12 +532,18 @@
     $('progressBox').scrollIntoView({ behavior: 'smooth', block: 'center' });
     try {
       const out = await api('/api/reports', { body: { assetId: state.unit.asset.id, personId: state.me?.id, text, source: usedVoice ? 'voice' : 'text', photo: state.photo } });
+      out.said = text;
       finish();
       state.lastResult = out;
-      setTimeout(() => { $('progressBox').classList.add('hidden'); renderResult(out); }, 350);
-      reportText.value = ''; baseText = ''; usedVoice = false; clearPhoto();
+      setTimeout(() => {
+        $('progressBox').classList.add('hidden');
+        renderResult(out);
+        const early = out.report && earlyUpdates.get(out.report.id);
+        if (early) { earlyUpdates.delete(out.report.id); applyReview(early); }
+      }, 350);
+      reportText.value = ''; rec.srBase = ''; usedVoice = false; clearPhoto();
       loadUnit(state.unit.asset.id, { quiet: true });
-      navigator.vibrate?.(out.extraction.severity === 'critical' ? [80, 50, 80, 50, 80] : 40);
+      navigator.vibrate?.(out.report && out.extraction.severity === 'critical' ? [80, 50, 80, 50, 80] : 40);
     } catch (err) {
       finish();
       $('progressBox').classList.add('hidden');
@@ -393,38 +564,74 @@
     } catch { /* TTS unavailable */ }
   }
 
-  function renderResult(out) {
-    const ex = out.extraction;
-    const chip = (label, items, cls = '') => items.map((x) => `<span class="chip ${cls}"><span class="k">${label}</span>${esc(x)}</span>`).join('');
-    const fix = out.fixes[0];
+  function aiLine(out) {
+    const ex = out.report?.extraction || out.extraction;
+    if (ex.ai_status === 'pending') return `<div class="ai-line">${icon('clock')}<span><b>${esc(out.aiLabel || 'The AI model')}</b> is reviewing this report. This card updates by itself when it’s done, usually within a minute. The crew has already been told.</span></div>`;
+    if (ex.ai_status === 'reviewed' && ex.ai_seconds) { // a background review that finished after the card was shown
+      const added = [...(out.aiAdded?.components || []), ...(out.aiAdded?.symptoms || []), ...(out.aiAdded?.fault_codes || []), ...(out.aiAdded?.conditions || [])];
+      return `<div class="ai-line">${icon('check')}<span>Reviewed by <b>${esc(ex.ai_label)}</b>${ex.ai_seconds ? ` in ${ex.ai_seconds}s` : ''}.${ex.rules_severity && ex.rules_severity !== ex.severity ? ` Severity raised from ${esc(ex.rules_severity)} to ${esc(ex.severity)}.` : ''}${added.length ? ` It also picked out: ${esc(added.join(', '))}.` : ''}</span></div>`;
+    }
+    if (ex.ai_status === 'failed') return `<div class="ai-line">${icon('alert')}<span>The AI review didn’t come back (${esc(ex.ai_error || 'no response')}). What you see is the rule engine’s read, which is what the crew received.</span></div>`;
+    return '';
+  }
+
+  function renderResult(out, { quiet = false } = {}) {
+    if (out.intent === 'delete_report') return renderDeleteResult(out, { quiet });
+    const ex = out.report?.extraction || out.extraction;
+    const chip = (label, items, cls = '') => (items || []).map((x) => `<span class="chip ${cls}"><span class="k">${label}</span>${esc(x)}</span>`).join('');
+    const fix = out.intent === 'resolved' ? null : out.fixes[0];
     const box = $('resultBox');
+    const informational = ['resolved', 'question', 'routine_log'].includes(out.intent);
+    const p = problemOf({ ...out.report, extraction: ex });
+    const a = out.asset;
+    const todo = out.intent === 'question' ? '' : out.intent === 'resolved' ? (ex.resolution ? `Repair noted: ${ex.resolution}` : '') : ex.operator_guidance;
+    const steps = out.advice || [];
+    const route = (d) => `<div class="route">${icon(DID_ICON[d.kind] || 'check')}<div>${esc(d.text)}</div></div>`;
+    const told = out.routed.reduce((n, r) => n + (r.count || 0), 0);
+    const picked = chip('part', ex.components) + chip('symptom', ex.symptoms) + chip('code', ex.fault_codes) + chip('condition', ex.conditions) + chip('hazard', ex.safety_hazards, 'hazard');
     box.innerHTML = `
-      <div class="result-banner ${esc(ex.severity)}">
-        <div class="row wrap" style="gap:6px">${sevPill(ex.severity)}<span class="tag">${esc(ex.category)}</span><span class="tag">${ex.ai_mode === 'claude' ? 'read by Claude' : 'read offline'}</span></div>
-        <div class="h">${esc(ex.summary)}</div>
-        <div class="guidance">${esc(ex.operator_guidance)}</div>
+      <div class="result-banner ${out.intent === 'resolved' ? 'low' : esc(ex.severity)}">
+        <div class="row wrap" style="gap:6px">${out.intent ? `<span class="tag cat">${esc(INTENT[out.intent] || out.intent)}</span>` : ''}${ex.ai_status === 'pending' ? '<span class="tag">AI reviewing…</span>' : ''}</div>
+        <div class="h">${esc(p.title)}</div>
+        ${keyFacts([
+          ['Machine', `${esc(a.id)} <span class="muted" style="font-weight:500">${esc(a.model)}</span>`],
+          ['Location', esc(a.site_name)],
+          ['Part', esc(p.part || '')],
+          ['Problem', esc(p.problem || p.hazard || '')],
+          ['Priority', informational ? '' : sevPill(ex.severity)],
+          ['Code', esc(p.code || '')],
+          ['When', 'Just now'],
+        ])}
       </div>
-      ${out.report.photo_path ? `<img src="${esc(out.report.photo_path)}" alt="Photo attached to this report" style="margin-top:12px;max-width:100%;border-radius:4px;border:1px solid var(--line)">` : ''}
-      <div class="res-sec"><h4>What it picked out</h4><div class="chips">
-        ${chip('part', ex.components)}${chip('symptom', ex.symptoms)}${chip('code', ex.fault_codes)}${chip('condition', ex.conditions)}${chip('hazard', ex.safety_hazards, 'hazard')}
-        ${!ex.components.length && !ex.symptoms.length && !ex.safety_hazards.length ? '<span class="muted">No parts or symptoms named. Saved as a general note on this machine.</span>' : ''}
-      </div></div>
-      <div class="res-sec"><h4>Who's been told</h4>
-        ${out.routed.length ? out.routed.map((r) => `<div class="route">${icon(r.to === 'CAT Engineering' ? 'wrench' : 'alert')}<div><b>${esc(r.to)}</b><div class="muted" style="font-size:13px">${esc(r.detail || '')}</div></div></div>`).join('') : '<div class="route"><span></span><div class="muted">Nobody. It’s low priority, so it went on the machine’s record without paging anyone.</div></div>'}
+      ${out.needsChoice ? `<div class="res-sec" id="choice"><h4>${esc(out.needsChoice.prompt)}</h4>${out.needsChoice.options.map((o) => `<button class="pick" data-close="${o.id}"><b>${esc(alertTitle(o))}</b><div class="m">${metaLine([sevPill(o.severity), ago(o.created_at)])}</div></button>`).join('')}<button class="btn ghost sm" style="margin-top:8px" data-close="none">None of these</button></div>` : ''}
+      <div class="res-dd">
+        ${out.answer ? dropdown('Answer', `<div class="md answer">${md(out.answer.text)}</div><div class="faint mono" style="font-size:11px;margin-top:8px">${out.answer.mode === 'llm' ? `answered by ${esc(out.answer.model || 'AI')} from this machine’s record` : 'answered from the record'}</div>`, { open: true }) : ''}
+        ${todo || steps.length ? dropdown(steps.length ? 'What to do next' : 'What to do', `${todo ? `<p class="guidance" style="margin:0 0 10px">${esc(todo)}</p>` : ''}${steps.length ? `<ol class="next-steps">${steps.map((x) => `<li>${esc(x)}</li>`).join('')}</ol>` : ''}`, { open: out.intent === 'request_advice' || ex.severity === 'critical', count: steps.length ? `${steps.length} steps` : null }) : ''}
+        ${out.did?.length ? dropdown('What Cat Track did', out.did.map(route).join(''), { count: out.did.length }) : ''}
+        ${informational && !out.routed.length ? '' : dropdown('Who’s been told', out.routed.length
+          ? out.routed.map((r) => `<div class="route">${icon(r.to === 'CAT Engineering' ? 'wrench' : 'alert')}<div><b>${esc(r.to)}</b><div class="muted" style="font-size:13px">${esc(r.detail || '')}</div></div></div>`).join('')
+          : `<div class="muted">${out.intent === 'update_existing' ? 'The people on the open issue see your update on it.' : 'Nobody new. It went on the machine’s record without paging anyone.'}</div>`, { count: told ? `${told} ${told === 1 ? 'person' : 'people'}` : 'nobody' })}
+        ${out.actions.length ? dropdown('Tasks created', out.actions.map((t) => `<div class="act"><span class="who">${esc(ROLE[t.assignee_role] || t.assignee_role)}</span><span>${esc(t.text)}</span></div>`).join(''), { count: out.actions.length }) : ''}
+        ${fix ? dropdown('What fixed this before', `<div class="fix-card">
+          <b>${esc(fix.title)}</b>
+          ${fix.steps ? `<div class="muted" style="font-size:13px;margin-top:4px">${esc(fix.steps)}</div>` : ''}
+          <div class="conf"><i style="width:${fix.confidence}%"></i></div>
+          <div class="muted" style="font-size:13px;margin-top:6px" id="fixStat">Worked ${fix.success} of ${fix.success + fix.fail} times on ${esc(a.model)} machines.</div>
+          <div class="row wrap" style="margin-top:10px"><span class="muted" style="font-size:13px">Tried it?</span><button class="btn sm" data-fb="1">${icon('thumbUp')} It worked</button><button class="btn sm" data-fb="0">${icon('thumbDown')} It didn’t</button></div>
+        </div>`, { count: `${fix.confidence}% success` }) : ''}
+        ${out.similar.length ? dropdown('Seen before', out.similar.slice(0, 3).map((x) => `<div class="sim"><div class="row spread"><span class="id">${esc(x.asset_id)}</span><span class="faint mono" style="font-size:12px">${dateShort(x.created_at)}</span></div><div>${esc(x.summary)}</div><div class="faint" style="font-size:12px;margin-top:2px">matched on ${esc(x.reasons.slice(0, 4).join(', '))}</div></div>`).join(''), { count: out.similar.length }) : ''}
+        ${(ex.likely_causes || []).length ? dropdown('Likely causes', ex.likely_causes.map((c) => `<div class="act"><span class="who">possible</span><span>${esc(c)}</span></div>`).join(''), { count: ex.likely_causes.length }) : ''}
+        ${dropdown('Details', kv([
+          ['You said', `<q>${esc(out.report.raw_text)}</q>`],
+          ['Summary', ex.summary !== p.title ? esc(ex.summary) : ''],
+          ['Picked out', picked ? `<div class="chips">${picked}</div>` : ''],
+          ['Read by', ex.ai_status === 'reviewed' || ex.ai_mode === 'llm' ? esc(ex.ai_label || 'AI') : 'rule engine'],
+          ['On the record', `${out.graph.newNodes} new ${out.graph.newNodes === 1 ? 'fact' : 'facts'}, ${out.graph.newEdges} new links, ${out.graph.reinforced} confirmed`],
+        ]) + aiLine(out) + (out.report.photo_path ? `<img src="${esc(out.report.photo_path)}" alt="Photo attached to this report" style="margin-top:12px;max-width:100%;border-radius:4px;border:1px solid var(--line)">` : ''))}
       </div>
-      ${out.actions.length ? `<div class="res-sec"><h4>Tasks created</h4>${out.actions.map((a) => `<div class="act"><span class="who">${esc(ROLE[a.assignee_role] || a.assignee_role)}</span><span>${esc(a.text)}</span></div>`).join('')}</div>` : ''}
-      ${fix ? `<div class="res-sec"><h4>What fixed this before</h4><div class="fix-card">
-        <b>${esc(fix.title)}</b>
-        ${fix.steps ? `<div class="muted" style="font-size:13px;margin-top:4px">${esc(fix.steps)}</div>` : ''}
-        <div class="conf"><i style="width:${fix.confidence}%"></i></div>
-        <div class="muted" style="font-size:13px;margin-top:6px" id="fixStat">Worked ${fix.success} of ${fix.success + fix.fail} times on ${esc(out.asset.model)} machines.</div>
-        <div class="row wrap" style="margin-top:10px"><span class="muted" style="font-size:13px">Tried it?</span><button class="btn sm" data-fb="1">${icon('thumbUp')} It worked</button><button class="btn sm" data-fb="0">${icon('thumbDown')} It didn’t</button></div>
-      </div></div>` : ''}
-      ${out.similar.length ? `<div class="res-sec"><h4>Seen before</h4>${out.similar.slice(0, 3).map((s) => `<div class="sim"><div class="row spread"><span class="id">${esc(s.asset_id)}</span><span class="faint mono" style="font-size:12px">${dateShort(s.created_at)}</span></div><div>${esc(s.summary)}</div><div class="faint" style="font-size:12px;margin-top:2px">matched on ${esc(s.reasons.slice(0, 4).join(', '))}</div></div>`).join('')}</div>` : ''}
-      <div class="graph-note">${icon('graph')}<span>Added to the record: ${out.graph.newNodes} new ${out.graph.newNodes === 1 ? 'fact' : 'facts'}, ${out.graph.newEdges} new links, ${out.graph.reinforced} existing ones confirmed.</span></div>
       <button class="btn block lg" style="margin-top:14px" id="newReport">${icon('mic')} Report something else</button>`;
     box.classList.remove('hidden');
-    box.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    if (!quiet) box.scrollIntoView({ behavior: 'smooth', block: 'start' });
     box.querySelectorAll('[data-fb]').forEach((b) => b.onclick = async () => {
       try {
         const r = await api(`/api/fixes/${fix.id}/feedback`, { body: { worked: b.dataset.fb === '1', assetId: out.asset.id, reportId: out.report.id, personId: state.me?.id } });
@@ -434,7 +641,186 @@
       } catch (err) { toast(esc(err.message), 'high'); }
     });
     box.querySelector('#newReport').onclick = () => { box.classList.add('hidden'); $('reportBox').scrollIntoView({ behavior: 'smooth' }); };
-    speak(`${ex.severity === 'critical' ? 'Critical. ' : ''}${ex.operator_guidance}${out.routed.length ? ` I've alerted ${out.routed.map((r) => r.to).join(' and ')}.` : ''}`);
+    box.querySelectorAll('[data-close]').forEach((b) => b.onclick = async () => {
+      const choice = box.querySelector('#choice');
+      if (b.dataset.close === 'none') { choice.innerHTML = '<div class="muted">Left everything open. Saved as a repair record on this machine.</div>'; return; }
+      box.querySelectorAll('[data-close]').forEach((x) => { x.disabled = true; });
+      try {
+        const r = await api(`/api/reports/${out.report.id}/resolve`, { body: { alertId: Number(b.dataset.close), personId: state.me?.id } });
+        choice.innerHTML = `<div class="route">${icon('check')}<div>Closed “${esc(alertTitle(r.alert))}”, with its tasks.${r.learnedFixId ? ' Your repair is saved as a known fix.' : ''}</div></div>`;
+        out.needsChoice = null;
+        toast('Issue closed.', 'good');
+        loadUnit(out.asset.id, { quiet: true });
+      } catch (err) { toast(esc(err.message), 'high'); box.querySelectorAll('[data-close]').forEach((x) => { x.disabled = false; }); }
+    });
+    if (!quiet) {
+      const lead = out.intent === 'resolved'
+        ? (out.did?.find((d) => d.kind === 'resolved') ? `Done. ${out.did.find((d) => d.kind === 'resolved').text}` : out.needsChoice ? 'Got it. Which issue did you fix? Pick it on screen.' : 'Repair noted.')
+        : out.intent === 'question' && out.answer ? plain(out.answer.text).slice(0, 320)
+          : `${ex.severity === 'critical' ? 'Critical. ' : ''}${out.advice?.length ? `Here's what to do. ${out.advice.map((x, i) => `${i + 1}. ${x}`).join(' ')}` : ex.operator_guidance}`;
+      const tail = out.routed.length ? ` I've alerted ${out.routed.map((r) => r.to).join(' and ')}.` : out.did?.find((d) => d.kind === 'help') ? ` ${out.did.find((d) => d.kind === 'help').text}.` : '';
+      speak(`${lead}${tail}`);
+    }
+  }
+
+  // ---------- "delete my last report" ----------
+  const whoWhen = (r) => metaLine([esc(r.person_name || SOURCE_LABEL[r.source] || ''), `<span title="${esc(dateTime(r.created_at))}">${ago(r.created_at)}</span>`]);
+
+  function renderDeleteResult(out, { quiet = false } = {}) {
+    const box = $('resultBox');
+    const gone = out.deleted || [];
+    const choice = out.needsChoice;
+    const one = gone.length === 1 ? gone[0] : null;
+    const others = (out.did || []).filter((d) => d.kind !== 'deleted');
+    const route = (d) => `<div class="route">${icon(DID_ICON[d.kind] || 'check')}<div>${esc(d.text)}</div></div>`;
+    const head = one ? `Deleted: ${problemOf(one).title}` : gone.length ? `Deleted ${gone.length} reports` : choice?.confirm ? choice.prompt : choice ? 'Which report should go?' : out.undone ? 'Put back' : 'Nothing was deleted';
+    box.innerHTML = `
+      <div class="result-banner">
+        <div class="row wrap" style="gap:6px"><span class="tag cat">${INTENT.delete_report}</span></div>
+        <div class="h">${esc(head)}</div>
+        ${one ? keyFacts([['Machine', esc(one.asset_id)], ['Part', esc(problemOf(one).part || '')], ['Priority', ['mechanical', 'safety'].includes(one.category) ? sevPill(one.severity) : ''], ['Reported', ago(one.created_at)], ['By', esc(one.person_name || SOURCE_LABEL[one.source] || '')]]) : ''}
+        ${!gone.length && !choice && out.did?.[0] ? `<div class="guidance">${esc(out.did[0].text)}</div>` : ''}
+        ${choice?.confirm ? '<div class="guidance">Nothing goes until you confirm.</div>' : ''}
+      </div>
+      ${gone.length > 1 ? `<div class="res-sec">${gone.map((d) => keyRow({ tone: toneOf(d), title: esc(problemOf(d).title), meta: whoWhen(d), body: kv([['Said', `<q>${esc(d.raw_text)}</q>`]]) })).join('')}</div>` : ''}
+      ${gone.length ? `<button class="btn block" id="undoDelete" style="margin-top:12px">${icon('history')} Undo, put ${gone.length === 1 ? 'it' : 'them'} back</button>` : ''}
+      ${gone.length ? `<div class="res-dd" style="margin-top:12px">${one ? dropdown('What was said', `<q class="said">${esc(one.raw_text)}</q>`) : ''}${others.length ? dropdown('What else changed', others.map(route).join(''), { count: others.length }) : ''}</div>` : ''}
+      ${choice && !choice.confirm ? `<div class="res-sec" id="choice"><h4>${esc(choice.prompt)}</h4>${choice.options.map((o) => `<button class="pick" data-del="${o.id}"><b>${esc(problemOf(o).title)}</b><div class="m">${whoWhen(o)}</div></button>`).join('')}
+        <button class="btn ghost sm" style="margin-top:8px" data-keep>Keep everything</button></div>` : ''}
+      ${choice?.confirm ? `<div class="res-sec" id="choice"><h4>These would go</h4>${choice.options.map((o) => `<div class="issue-line"><span>${esc(problemOf(o).title)}</span><span class="faint">${whoWhen(o)}</span></div>`).join('')}
+        <div class="row wrap" style="margin-top:12px"><button class="btn danger" data-del-all>${icon('x')} Delete all ${choice.options.length}</button><button class="btn ghost" data-keep>Keep them</button></div></div>` : ''}
+      <button class="btn block lg" style="margin-top:14px" id="newReport">${icon('mic')} Report something else</button>`;
+    box.classList.remove('hidden');
+    if (!quiet) box.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    box.querySelector('#newReport').onclick = () => { box.classList.add('hidden'); $('reportBox').scrollIntoView({ behavior: 'smooth' }); };
+    box.querySelector('#undoDelete')?.addEventListener('click', async (e) => {
+      e.currentTarget.disabled = true;
+      try {
+        const r = await api('/api/reports/restore', { body: { ids: gone.map((d) => d.id), personId: state.me?.id } });
+        Object.assign(out, { deleted: [], needsChoice: null, undone: true, did: [{ kind: 'note', text: `${r.restored.length === 1 ? 'The report is' : `${r.restored.length} reports are`} back on the record, with ${r.restored.length === 1 ? 'its' : 'their'} alerts and links.` }] });
+        renderDeleteResult(out, { quiet: true });
+        toast('Put back on the record.', 'good');
+      } catch (err) { toast(esc(err.message), 'high'); e.currentTarget.disabled = false; }
+    });
+    const doDelete = async (ids) => {
+      box.querySelectorAll('[data-del],[data-del-all],[data-keep]').forEach((x) => { x.disabled = true; });
+      try {
+        const r = await api('/api/reports/delete', { body: { ids, personId: state.me?.id, reason: out.said || '', via: 'voice' } });
+        Object.assign(out, { deleted: r.deleted, did: r.did, needsChoice: null });
+        renderDeleteResult(out, { quiet: true });
+        toast(`Deleted ${r.deleted.length === 1 ? 'the report' : `${r.deleted.length} reports`}.`, 'good');
+      } catch (err) { toast(esc(err.message), 'high'); box.querySelectorAll('[data-del],[data-del-all],[data-keep]').forEach((x) => { x.disabled = false; }); }
+    };
+    box.querySelectorAll('[data-del]').forEach((b) => b.onclick = () => doDelete([Number(b.dataset.del)]));
+    box.querySelector('[data-del-all]')?.addEventListener('click', () => doDelete(choice.options.map((o) => o.id)));
+    box.querySelector('[data-keep]')?.addEventListener('click', () => {
+      Object.assign(out, { needsChoice: null, did: [{ kind: 'note', text: 'Kept everything. Nothing was deleted.' }] });
+      renderDeleteResult(out, { quiet: true });
+    });
+    if (!quiet) {
+      speak(one ? `Deleted the report: ${plain(problemOf(one).title)}. Tap undo if that was the wrong one.`
+        : gone.length ? `Deleted ${gone.length} reports. Tap undo if that was wrong.`
+          : choice?.confirm ? `That would delete ${choice.options.length} reports. Confirm on screen if you mean it.`
+            : choice ? 'Which report should I delete? Pick it on screen.' : plain(out.did?.[0]?.text || 'Nothing was deleted.'));
+    }
+  }
+
+  // ---------- this machine's earlier reports ----------
+  const hist = { scope: store.get('histScope', 'all'), items: [], next: null, total: 0, seq: 0 };
+  function histRow(r) {
+    const p = problemOf(r);
+    const problem = ['mechanical', 'safety'].includes(r.category);
+    return keyRow({
+      tone: toneOf(r), attrs: `data-id="${r.id}"`,
+      title: esc(p.title),
+      meta: metaLine([`<span title="${esc(dateTime(r.created_at))}">${ago(r.created_at)}</span>`, esc(r.person_name || SOURCE_LABEL[r.source] || r.source)]),
+      right: `${problem ? sevPill(r.severity) : ''}<span class="rep-status ${esc(r.status)}"><i></i>${esc(REPORT_STATUS[r.status] || r.status)}</span>`,
+      body: kv([
+        ['Said', `<q>${esc(r.raw_text)}</q>`],
+        ['Summary', r.summary !== p.title ? esc(r.summary) : ''],
+        ['Fault code', esc(p.code || '')],
+        ['Reported by', esc([r.person_name, (SOURCE_LABEL[r.source] || r.source).toLowerCase()].filter(Boolean).join(', '))],
+        ['When', esc(dateTime(r.created_at))],
+        ['What to do', problem ? esc(r.extraction?.operator_guidance || '') : ''],
+      ]) + `<div class="kr-actions"><button class="btn sm" type="button" data-rm="${r.id}">${icon('x')} Delete this report</button></div>`,
+    });
+  }
+  function renderHistory() {
+    if (!state.unit) return;
+    const id = state.unit.asset.id;
+    $('histTitle').textContent = `Earlier reports on ${id}`;
+    $('histScope').querySelectorAll('button').forEach((b) => b.classList.toggle('on', b.dataset.s === hist.scope));
+    $('histCount').textContent = hist.total ? `${hist.total} on record` : '';
+    const mine = hist.scope === 'mine';
+    $('histList').innerHTML = hist.items.length ? hist.items.map(histRow).join('')
+      : emptyState({ icon: 'history', title: mine ? `Nothing from ${esc(state.me?.name.split(' ')[0] || 'you')} on ${esc(id)} yet` : `Nothing on record for ${esc(id)} yet`, body: mine ? 'Switch to Everyone to see what the rest of the crew reported.' : 'The first voice note, repair or sensor alarm on this machine starts its history.' });
+    $('histMore').innerHTML = hist.next ? `<button class="btn ghost sm" type="button" id="histMoreBtn" style="margin-top:8px">Show older reports</button>`
+      : hist.total > 6 ? `<a href="/reports?asset=${encodeURIComponent(id)}" style="display:inline-block;margin-top:10px;font-size:14px">Open ${esc(id)} in the report log</a>` : '';
+    $('histMoreBtn')?.addEventListener('click', () => loadHistory({ more: true }));
+  }
+  async function loadHistory({ more = false } = {}) {
+    if (!state.unit) return;
+    const seq = ++hist.seq;
+    const id = state.unit.asset.id;
+    if (!more) $('histList').innerHTML = hist.items.length && hist.items[0].asset_id === id ? $('histList').innerHTML : skeleton(3, 'block');
+    const qs = new URLSearchParams({ asset: id, limit: more ? '10' : '6' });
+    if (hist.scope === 'mine' && state.me) qs.set('person', state.me.id);
+    if (more && hist.next) qs.set('before', hist.next);
+    try {
+      const [page, deleted] = await Promise.all([api(`/api/reports/log?${qs}`), more ? null : api(`/api/reports/deleted?asset=${encodeURIComponent(id)}&limit=10`)]);
+      if (seq !== hist.seq) return;
+      hist.items = more ? [...hist.items, ...page.reports] : page.reports;
+      hist.next = page.next; hist.total = page.total;
+      renderHistory();
+      if (deleted) renderDeleted(deleted);
+    } catch (err) {
+      if (seq === hist.seq && !more) $('histList').innerHTML = emptyState({ icon: 'wifiOff', error: true, title: 'Couldn’t load earlier reports', body: esc(err.message) });
+    }
+  }
+  function renderDeleted(rows) {
+    const el = $('histDeleted');
+    el.classList.toggle('hidden', !rows.length);
+    if (!rows.length) return;
+    el.querySelector('summary').textContent = `Deleted from ${state.unit.asset.id} (${rows.length}${rows.length === 10 ? '+' : ''})`;
+    $('histDeletedList').innerHTML = rows.map((t) => keyRow({
+      tone: 'withdrawn',
+      title: esc(problemOf(t).title),
+      meta: metaLine([`deleted ${ago(t.deleted_at)}`, t.deleted_by_name ? `by ${esc(t.deleted_by_name)}` : '', t.via === 'voice' ? 'by voice' : '']),
+      body: kv([['Said', `<q>${esc(t.raw_text || '')}</q>`], ['Reported by', esc([t.person_name, ago(t.created_at)].filter(Boolean).join(', '))], ['Why deleted', t.reason ? `<q>${esc(t.reason)}</q>` : '']])
+        + `<div class="kr-actions"><button class="btn sm" type="button" data-restore="${t.id}">${icon('history')} Restore</button></div>`,
+    })).join('');
+  }
+  $('histScope').querySelectorAll('button').forEach((b) => b.onclick = () => { hist.scope = b.dataset.s; store.set('histScope', hist.scope); hist.next = null; hist.items = []; loadHistory(); });
+  $('history').addEventListener('click', async (e) => {
+    const rm = e.target.closest('[data-rm]');
+    if (rm) {
+      const id = Number(rm.dataset.rm);
+      const row = rm.closest('.kr'); row.classList.add('gone');
+      try {
+        const r = await api('/api/reports/delete', { body: { ids: [id], personId: state.me?.id, via: 'manual' } });
+        const d = r.deleted[0];
+        undoBar(`Deleted “${esc(clip(problemOf(d).title, 60))}”.`, async () => { await api('/api/reports/restore', { body: { ids: [id], personId: state.me?.id } }); toast('Put back on the record.', 'good'); });
+      } catch (err) { row.classList.remove('gone'); toast(esc(err.message), 'high'); }
+      return;
+    }
+    const rs = e.target.closest('[data-restore]');
+    if (rs) {
+      rs.disabled = true;
+      try { await api('/api/reports/restore', { body: { ids: [Number(rs.dataset.restore)], personId: state.me?.id } }); toast('Put back on the record.', 'good'); }
+      catch (err) { rs.disabled = false; toast(esc(err.message), 'high'); }
+    }
+  });
+  let histTimer = null;
+  const softHistory = () => { clearTimeout(histTimer); histTimer = setTimeout(() => { hist.next = null; loadHistory(); }, 250); };
+
+  // The model review can finish before the submit response arrives (fast providers), so park it.
+  const earlyUpdates = new Map();
+  function applyReview({ report, status, added }) {
+    const out = state.lastResult;
+    if (!out || $('resultBox').classList.contains('hidden')) return;
+    out.report = report; out.extraction = report.extraction; out.aiAdded = added;
+    renderResult(out, { quiet: true });
+    if (status === 'reviewed') toast(`${esc(report.extraction.ai_label)} finished reviewing your report.`, 'good');
   }
 
   // ---------- live site alerts ----------
@@ -448,7 +834,13 @@
   function renderFeed(flashId) {
     $('feedCount').textContent = feedAlerts.length ? `${feedAlerts.length} open` : '';
     $('feed').innerHTML = feedAlerts.length
-      ? feedAlerts.slice(0, 8).map((a) => `<div class="alert-card ${esc(a.kind === 'bulletin' || a.kind === 'agent' ? a.kind : a.severity)} ${a.id === flashId ? 'flash' : ''}"><div class="row spread" style="align-items:flex-start"><span class="t">${esc(a.title)}</span><span class="faint mono" style="font-size:11px;white-space:nowrap">${ago(a.created_at)}</span></div>${a.body ? `<div class="b">${esc(a.body.length > 180 ? a.body.slice(0, 179) + '…' : a.body)}</div>` : ''}</div>`).join('')
+      ? feedAlerts.slice(0, 8).map((a) => keyRow({
+        tone: `${toneOf(a)} ${a.id === flashId ? 'flash' : ''}`,
+        title: esc(alertTitle(a)),
+        meta: metaLine([a.asset_id ? `<span class="id">${esc(a.asset_id)}</span> ${esc(a.model || '')}` : 'Every machine of this model', `<span title="${esc(dateTime(a.created_at))}">${ago(a.created_at)}</span>`]),
+        right: a.kind === 'bulletin' ? '<span class="tag cat">CAT</span>' : sevPill(a.severity),
+        body: alertDetails(a),
+      })).join('')
       : emptyState({ icon: 'shield', title: `Nothing open at ${esc(state.unit.asset.site_name)}`, body: 'When anyone on this site reports a problem, it shows up here within a second, and your phone buzzes.' });
   }
 
@@ -459,16 +851,27 @@
       renderFeed(alert.id);
       const ownReport = state.submitting && alert.asset_id === state.unit.asset.id;
       if (!ownReport && state.lastResult?.alert?.id !== alert.id) {
-        toast(`${icon('alert')} <b>${esc(alert.title)}</b>`, alert.severity);
+        toast(`${icon('alert')} <b>${esc(alert.asset_id ? alert.asset_id + ' · ' : '')}${esc(alertTitle(alert))}</b>`, alert.severity);
         navigator.vibrate?.([60, 40, 60]);
       }
     },
     'alert-updated': ({ alert }) => {
       if (!state.unit || alert.site_id !== state.unit.asset.site_id) return;
-      feedAlerts = alert.status === 'resolved' ? feedAlerts.filter((a) => a.id !== alert.id) : feedAlerts.map((a) => (a.id === alert.id ? alert : a));
+      if (alert.status === 'resolved') feedAlerts = feedAlerts.filter((a) => a.id !== alert.id);
+      else if (feedAlerts.some((a) => a.id === alert.id)) feedAlerts = feedAlerts.map((a) => (a.id === alert.id ? alert : a));
+      else feedAlerts = [alert, ...feedAlerts].sort((a, b) => b.created_at.localeCompare(a.created_at)); // reopened
       renderFeed();
     },
+    report: ({ report }) => { if (state.unit && report.asset_id === state.unit.asset.id) softHistory(); },
+    'report-deleted': ({ reports }) => { if (state.unit && reports.some((r) => r.asset_id === state.unit.asset.id)) softHistory(); },
+    'report-restored': ({ reports }) => { if (state.unit && reports.some((r) => r.asset_id === state.unit.asset.id)) softHistory(); },
     asset: (asset) => { if (state.unit && asset.id === state.unit.asset.id) loadUnit(asset.id, { quiet: true }); },
+    'report-updated': (ev) => {
+      if (state.unit && ev.report?.asset_id === state.unit.asset.id) softHistory();
+      const out = state.lastResult;
+      if (!out || out.report?.id !== ev.reportId) { earlyUpdates.set(ev.reportId, ev); if (earlyUpdates.size > 20) earlyUpdates.delete(earlyUpdates.keys().next().value); return; }
+      applyReview(ev);
+    },
   }, $('live'));
 
   // ---------- boot ----------

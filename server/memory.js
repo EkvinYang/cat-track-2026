@@ -140,6 +140,13 @@ export function assetMemory(assetId) {
     facts.push({ kind: 'service', level: due < 50 ? 'medium' : 'info', text: due > 0 ? `${since} h since last PM — next ${PM_INTERVAL} h service due in ~${due} h` : `PM overdue by ${-due} h` });
   }
 
+  // Product documents that apply to this model (or to every machine)
+  for (const d of q.all(`SELECT DISTINCT d.id, d.title, d.doc_type, d.integrated_at FROM documents d JOIN doc_models m ON m.doc_id = d.id
+                         WHERE d.status = 'integrated' AND (m.model = ? OR m.model = '*') ORDER BY d.integrated_at DESC LIMIT 4`, asset.model)) {
+    const kind = { spec_sheet: 'Spec sheet', policy: 'Policy', service_bulletin: 'Service bulletin', manual: 'Manual' }[d.doc_type] || 'Document';
+    facts.push({ kind: 'document', level: 'info', docId: d.id, text: `${kind} on file: ${d.title} [D${d.id}]` });
+  }
+
   // Stored facts (repairs, learned notes)
   for (const f of q.all('SELECT * FROM memory_facts WHERE asset_id = ? ORDER BY created_at DESC LIMIT 6', assetId)) {
     facts.push({ kind: f.kind || 'note', level: 'info', text: `${f.fact} (${daysAgo(f.created_at)}d ago)` });

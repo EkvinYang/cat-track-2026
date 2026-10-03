@@ -3,17 +3,22 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { q, tx, nowIso, UPLOAD_DIR, parseJson, alertRow } from './db.js';
-import { upsertNode, upsertEdge, nodeId, newDelta, slug } from './graph.js';
-import { extractObservation } from './extract.js';
-import { componentSystem, sevRank } from './vocab.js';
+import { upsertNode, upsertEdge, relabelNode, nodeId, newDelta, slug } from './graph.js';
+import { weaveReport } from './weave.js';
+import { casePriority, refreshCase, deleteReports, findReportsToDelete, reportOption } from './history.js';
+import { HttpError } from './errors.js';
+import { extractObservation, modelExtract } from './extract.js';
+import { llmEnabled, llmInfo, describeLlmError } from './llm.js';
+import { searchDocs } from './docs.js';
+import { answerNow } from './agent.js';
+import { ROLES } from './vocab.js';
+import { componentSystem, sevRank, issueClass } from './vocab.js';
 import {
   getAsset, recentReports, recallSimilar, rankFixes, fixesForModel, recomputeAssetState, normalizeAssetId, hydrateReport,
 } from './memory.js';
 import { publish } from './events.js';
 
-export class HttpError extends Error {
-  constructor(status, message) { super(message); this.status = status; }
-}
+export { HttpError };
 
 const ROLE_LABEL = { operator: 'Operators', technician: 'Technicians', site_manager: 'Site manager', safety_officer: 'Safety officer', fleet_manager: 'Fleet manager' };
 
@@ -26,12 +31,6 @@ function savePhoto(dataUrl) {
   return { url: `/uploads/${file}`, mediaType: m[1], data: m[3] };
 }
 
-function casePriority(c, severity, distinctAssets) {
-  if (severity === 'critical' || c.occurrences >= 4 || (c.occurrences >= 3 && distinctAssets >= 2)) return 'P1';
-  if (severity === 'high' || c.occurrences >= 2) return 'P2';
-  return 'P3';
-}
-
 /** People on the job site who receive an alert (site staff for the given roles + roaming staff). */
 export function recipientsFor(siteId, roles) {
   if (!roles.length) return [];
@@ -42,8 +41,20 @@ export function recipientsFor(siteId, roles) {
 /**
  * Ingest one observation from the field.
  * @param {object} input { assetId, personId, text, source, photo (data URL), createdAt, forceRules, silent, overrides }
+ * Live screens hear 'report-received' as soon as the report is accepted, then 'report' (or
+ * 'report-handled' for a delete request, 'report-failed' on an error) when it has been processed.
  */
 export async function ingestReport(input) {
+  const run = { rid: `rx${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`, announced: false };
+  try {
+    return await processReport(input, run);
+  } catch (err) {
+    if (run.announced) publish('report-failed', { rid: run.rid, error: err.message });
+    throw err;
+  }
+}
+
+async function processReport(input, run) {
   const text = String(input.text || '').trim();
   if (!text) throw new HttpError(400, 'Report text is empty — dictate or type what you observed.');
   if (text.length > 4000) throw new HttpError(400, 'Report is too long (max 4000 characters).');
@@ -53,17 +64,51 @@ export async function ingestReport(input) {
   const person = input.personId ? q.get('SELECT * FROM people WHERE id = ?', input.personId) : null;
   const createdAt = input.createdAt || nowIso();
   const source = input.source || 'voice';
+  if (!input.silent) {
+    publish('report-received', { rid: run.rid, asset_id: asset.id, site_id: asset.site_id, person_name: person?.name || null, source, at: createdAt });
+    run.announced = true;
+  }
   const photo = input.photo ? savePhoto(input.photo) : null;
 
-  // 1. Perceive: structured extraction, informed by this machine's memory.
-  const history = recentReports(asset.id, 8);
-  const ex = await extractObservation(text, {
+  // 1. Understand: what happened, and what does the person want done? Live reports go to the AI
+  //    first (with a time limit); the rule engine answers if it's off, slow or fails. Seeded history,
+  //    telemetry and repair records (forceRules) skip both the AI and intent routing.
+  const history = recentReports(asset.id, 12);
+  const openAlerts = q.all(`SELECT id, title, severity, kind, report_id, created_at FROM alerts WHERE asset_id = ? AND status <> 'resolved' ORDER BY created_at DESC LIMIT 8`, asset.id);
+  const extractCtx = {
     assetId: asset.id, asset, siteName: asset.site_name, siteClimate: asset.site_climate,
-    reporter: person?.name, reporterRole: person?.role, source, history,
+    reporter: person?.name, reporterRole: person?.role, source, history, openAlerts,
     fixes: fixesForModel(asset.model), photo: photo ? { mediaType: photo.mediaType, data: photo.data } : null,
-    forceRules: input.forceRules,
-  });
+    docs: searchDocs(text, { model: asset.model, limit: 2, excerpt: 600 }),
+  };
+  const rules = await extractObservation(text, { ...extractCtx, forceRules: true });
+  const live = !input.forceRules && !input.overrides;
+  let ex = rules; let aiPending = false;
+  if (live && llmEnabled()) {
+    try {
+      ex = await modelExtract(text, { ...extractCtx, timeoutMs: SYNC_TIMEOUT_MS }, rules);
+      ex.ai_status = 'reviewed';
+    } catch (err) {
+      console.warn('[ingest] AI understanding failed, using rules:', describeLlmError(err));
+      ex = { ...rules, ai_status: 'pending' };
+      aiPending = true; // try again in the background
+    }
+  }
   if (input.overrides) Object.assign(ex, input.overrides);
+  const intent = live ? ex.intent || 'new_issue' : 'record';
+  // A request to delete earlier reports files nothing new: it only takes reports off the record.
+  if (intent === 'delete_report') {
+    const out = handleDeleteRequest({ text, ex, asset, person });
+    if (!input.silent) publish('report-handled', { rid: run.rid, intent, asset_id: asset.id, site_id: asset.site_id, deleted: out.deleted.map((d) => d.id), asking: Boolean(out.needsChoice) });
+    return out;
+  }
+  const hasProblem = ex.components.length > 0 || ex.symptoms.length > 0 || ex.safety_hazards.length > 0;
+  // Choose what this report should touch before writing anything.
+  const target = ['resolved', 'update_existing'].includes(intent) ? pickOpenAlert(ex, openAlerts, intent) : null;
+  if (intent === 'resolved') Object.assign(ex, { category: 'maintenance', severity: 'low', needs_engineering: false, is_mechanical_failure: false, action_items: [], memory_facts: [...new Set([...(ex.memory_facts || []), `Repaired: ${ex.resolution || text}`.slice(0, 200)])] });
+  const asUpdate = intent === 'update_existing' && Boolean(target);
+  const quiet = ['resolved', 'question', 'routine_log'].includes(intent) || asUpdate || (intent === 'request_advice' && !hasProblem) || (intent === 'request_help' && !hasProblem);
+  const skipCase = quiet || intent === 'correction' && !hasProblem;
 
   // 2. Recall: what does the fleet already know about this?
   const similar = recallSimilar(ex, asset, { limit: 5 });
@@ -79,45 +124,7 @@ export async function ingestReport(input) {
       { ...ex, similar: similar.map((s) => ({ id: s.id, score: s.score, reasons: s.reasons })) }, ex.ai_mode, createdAt);
     const reportId = Number(ins.lastInsertRowid);
 
-    const rNode = upsertNode('report', String(reportId), ex.summary.slice(0, 48), { reportId, severity: ex.severity, category: ex.category, asset: asset.id, source, created_at: createdAt }, delta, createdAt);
-    const aNode = upsertNode('asset', asset.id, asset.id, { model: asset.model, family: asset.family, status: asset.status }, delta, createdAt);
-    const mNode = upsertNode('model', asset.model, asset.model, { family: asset.family }, delta, createdAt);
-    const sNode = upsertNode('site', asset.site_id, asset.site_name, { location: asset.site_location }, delta, createdAt);
-    upsertEdge(rNode, aNode, 'ABOUT', delta, createdAt);
-    upsertEdge(aNode, mNode, 'INSTANCE_OF', delta, createdAt);
-    upsertEdge(aNode, sNode, 'LOCATED_AT', delta, createdAt);
-    if (person) {
-      const pNode = upsertNode('person', person.id, person.name, { role: person.role }, delta, createdAt);
-      upsertEdge(rNode, pNode, 'REPORTED_BY', delta, createdAt);
-    }
-    const compNodes = ex.components.map((c) => {
-      const id = upsertNode('component', c, c, { system: componentSystem(c) }, delta, createdAt);
-      upsertEdge(rNode, id, 'AFFECTS', delta, createdAt);
-      upsertEdge(mNode, id, 'HAS_COMPONENT', delta, createdAt);
-      return id;
-    });
-    const symNodes = ex.symptoms.map((s) => {
-      const id = upsertNode('symptom', s, s, {}, delta, createdAt);
-      upsertEdge(rNode, id, 'EXHIBITS', delta, createdAt);
-      return id;
-    });
-    for (const cId of compNodes.slice(0, 2)) for (const sId of symNodes) upsertEdge(cId, sId, 'SHOWS', delta, createdAt);
-    for (const code of ex.fault_codes) {
-      const id = upsertNode('code', code, code, {}, delta, createdAt);
-      upsertEdge(rNode, id, 'RAISED', delta, createdAt);
-      for (const cId of compNodes.slice(0, 1)) upsertEdge(id, cId, 'INDICATES', delta, createdAt);
-    }
-    for (const cond of ex.conditions) {
-      const id = upsertNode('condition', cond, cond, {}, delta, createdAt);
-      upsertEdge(rNode, id, 'UNDER', delta, createdAt);
-      for (const sId of symNodes) upsertEdge(sId, id, 'CORRELATES_WITH', delta, createdAt);
-    }
-    for (const hz of ex.safety_hazards) {
-      const id = upsertNode('hazard', hz, hz, {}, delta, createdAt);
-      upsertEdge(rNode, id, 'FLAGS', delta, createdAt);
-      upsertEdge(id, sNode, 'OBSERVED_AT', delta, createdAt);
-    }
-    for (const s of similar.filter((x) => x.score >= 7).slice(0, 3)) upsertEdge(rNode, nodeId('report', String(s.id)), 'SIMILAR_TO', delta, createdAt);
+    const { rNode, mNode, compNodes } = weaveReport({ reportId, ex, asset, person, source, createdAt, similar, delta });
     for (const fact of ex.memory_facts || []) {
       q.run(`INSERT INTO memory_facts (asset_id, fact, kind, source_report_id, fact_key, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)
              ON CONFLICT(asset_id, fact_key) DO UPDATE SET fact = excluded.fact, updated_at = excluded.updated_at`,
@@ -128,7 +135,7 @@ export async function ingestReport(input) {
     let engCase = null;
     const primaryC = ex.components[0];
     const primaryS = ex.symptoms.find((s) => s !== 'Warning / fault code') || ex.symptoms[0] || 'Fault';
-    if (ex.needs_engineering && primaryC) {
+    if (ex.needs_engineering && primaryC && !skipCase) {
       const key = `${asset.model}|${primaryC}`;
       let c = q.get('SELECT * FROM eng_cases WHERE case_key = ?', key);
       if (!c) {
@@ -154,7 +161,7 @@ export async function ingestReport(input) {
     // 5. Alert the people on site and hand them concrete action items.
     let alert = null; const actions = []; let recipients = [];
     const alertWorthy = sevRank(ex.severity) >= 1 || ex.category === 'safety';
-    if (alertWorthy && ex.category !== 'maintenance') {
+    if (alertWorthy && ex.category !== 'maintenance' && !quiet) {
       const kind = ex.category === 'safety' ? 'safety' : (ex.is_mechanical_failure || ex.category === 'mechanical') ? 'mechanical' : 'operational';
       const roles = new Set(['site_manager']);
       if (kind === 'mechanical') { roles.add('technician'); if (sevRank(ex.severity) >= 2) roles.add('operator'); }
@@ -163,8 +170,7 @@ export async function ingestReport(input) {
       for (const a of ex.action_items || []) if (a.assignee_role) roles.add(a.assignee_role);
       const audience = [...roles];
       recipients = recipientsFor(asset.site_id, audience).filter((p) => p.id !== person?.id);
-      const body = [ex.operator_guidance, fixes[0] ? `What worked before: ${fixes[0].title} (${fixes[0].success} of ${fixes[0].success + fixes[0].fail} times).` : '', engCase ? `Sent to CAT Engineering as case #${engCase.id}, now ${engCase.occurrences} report${engCase.occurrences === 1 ? '' : 's'} across the fleet.` : '']
-        .filter(Boolean).join(' ');
+      const body = alertBody(ex.operator_guidance, fixes[0], engCase);
       const ar = q.run(`INSERT INTO alerts (site_id, asset_id, report_id, case_id, kind, severity, title, body, audience, status, created_at, updated_at)
                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?, ?)`,
         asset.site_id, asset.id, reportId, engCase?.id, kind, ex.severity, `${asset.id} · ${ex.summary}`, body, audience, createdAt, createdAt);
@@ -177,8 +183,50 @@ export async function ingestReport(input) {
         actions.push(q.get('SELECT * FROM action_items WHERE id = ?', Number(r.lastInsertRowid)));
       }
     }
+    if (asUpdate && target.report_id) upsertEdge(rNode, nodeId('report', String(target.report_id)), 'UPDATES', delta, createdAt);
     return { reportId, alert, actions, engCase, recipients };
   });
+
+  // 6. Act on what the person asked for.
+  const did = []; let needsChoice = null; let answer = null; let advice = [];
+  if (live) {
+    if (intent === 'resolved') {
+      if (target) {
+        const closed = closeAlert(target.id, { personId: person?.id, resolution: ex.resolution || text, viaReportId: result.reportId });
+        did.push({ kind: 'resolved', text: `Closed the open issue “${target.title}”, with its tasks.`, alertId: target.id });
+        if (closed.learnedFixId) did.push({ kind: 'learned', text: `Saved “${clip(ex.resolution || text, 90)}” as a known fix for ${asset.model}.` });
+      } else if (openAlerts.length) {
+        needsChoice = { kind: 'resolve', reportId: result.reportId, prompt: 'Which issue did you fix?', options: openAlerts.map((a) => ({ id: a.id, title: a.title, severity: a.severity, created_at: a.created_at })) };
+        did.push({ kind: 'note', text: `${asset.id} has ${openAlerts.length} open issues — pick the one you fixed so it can be closed.` });
+      } else {
+        did.push({ kind: 'note', text: `No open issue on ${asset.id} to close — saved as a repair record.` });
+      }
+    }
+    if (asUpdate) {
+      updateOpenAlert(target.id, ex, person);
+      did.push({ kind: 'updated', text: `Added this to the open issue “${target.title}” instead of opening a new one.`, alertId: target.id });
+    } else if (intent === 'update_existing') {
+      did.push({ kind: 'note', text: 'No matching open issue, so this was filed as a new one.' });
+    }
+    if (intent === 'correction') {
+      const wrong = pickCorrectedReport(ex, history, person, result.reportId);
+      if (wrong) {
+        retractReport(wrong.id, person, text);
+        did.push({ kind: 'retracted', text: `Withdrew your earlier report “${wrong.summary}” and removed it from its alerts and engineering case.`, reportId: wrong.id });
+      } else did.push({ kind: 'note', text: 'Couldn’t tell which earlier report this corrects, so nothing was withdrawn.' });
+    }
+    if ((intent === 'request_help' || (ex.help_role && ex.help_role !== 'none' && ex.help_request)) && ex.help_request) {
+      const h = requestHelp(asset, person, ex, result.alert, result.reportId);
+      did.push({ kind: 'help', text: `Asked the ${ROLE_LABEL[h.role] ? ROLE_LABEL[h.role].toLowerCase().replace(/s$/, '') : h.role} for: ${clip(ex.help_request, 100)}`, alertId: h.alertId });
+    }
+    if (intent === 'question') {
+      const a = await answerNow({ question: text, assetId: asset.id, personId: person?.id, role: person?.role || 'operator' });
+      answer = { text: a.answer, mode: a.mode, model: a.model || null, trace: a.trace || [] };
+    }
+    if (ex.wants_advice || ex.advice_steps?.length || intent === 'request_advice') {
+      advice = ex.advice_steps?.length ? ex.advice_steps : ruleAdvice(ex, fixes);
+    }
+  }
 
   const assetState = recomputeAssetState(asset.id);
   const report = hydrateReport(q.get(`SELECT r.*, p.name AS person_name, p.role AS person_role FROM reports r LEFT JOIN people p ON p.id = r.person_id WHERE r.id = ?`, result.reportId));
@@ -196,18 +244,132 @@ export async function ingestReport(input) {
 
   const out = {
     report, extraction: ex, asset: { ...getAsset(asset.id), ...assetState }, alert: result.alert, actions: result.actions,
-    engCase: result.engCase, similar, fixes, routed,
+    engCase: result.engCase, similar, fixes, routed, intent, did, advice, answer, needsChoice,
     graph: { newNodes: graphDelta.nodes.filter((n) => n.isNew).length, newEdges: graphDelta.edges.filter((e) => e.isNew).length, reinforced: graphDelta.edges.filter((e) => !e.isNew).length + graphDelta.nodes.filter((n) => !n.isNew).length },
   };
 
   if (!input.silent) {
-    publish('report', { report, asset: out.asset });
+    publish('report', {
+      report, asset: out.asset, rid: run.rid, intent, issue: issueClass(report),
+      outcome: { alertId: result.alert?.id || null, told: result.recipients.length, caseId: result.engCase?.id || null, newFacts: out.graph.newNodes, newLinks: out.graph.newEdges, did: did.map((d) => d.kind) },
+    });
     publish('graph', graphDelta);
     publish('asset', out.asset);
     if (result.alert) publish('alert', { alert: result.alert, actions: result.actions, recipients: result.recipients.length });
     if (result.engCase) publish('case', { case: result.engCase, reportId: result.reportId });
   }
+  if (aiPending) {
+    out.aiPending = true;
+    out.aiLabel = llmInfo().label;
+    reviewReport(result.reportId, text, extractCtx).catch((err) => console.warn('[review] failed:', err.message));
+  }
   return out;
+}
+
+function alertBody(guidance, fix, engCase) {
+  return [
+    guidance,
+    fix ? `What worked before: ${fix.title} (${fix.success} of ${fix.success + fix.fail} times).` : '',
+    engCase ? `Sent to CAT Engineering as case #${engCase.id}, now ${engCase.occurrences} report${engCase.occurrences === 1 ? '' : 's'} across the fleet.` : '',
+  ].filter(Boolean).join(' ');
+}
+
+const reportWithPerson = (id) => hydrateReport(q.get(`SELECT r.*, p.name AS person_name, p.role AS person_role FROM reports r LEFT JOIN people p ON p.id = r.person_id WHERE r.id = ?`, id));
+
+/**
+ * Background model review of a report the rule engine already filed. It can sharpen the summary and
+ * guidance, add entities the rules missed (new graph links), add likely causes and memory facts, and
+ * raise severity — never lower it, and it never removes anything the crew was already told.
+ */
+async function reviewReport(reportId, text, ctx) {
+  const started = Date.now();
+  let ai;
+  try {
+    ai = await modelExtract(text, ctx);
+  } catch (err) {
+    const why = describeLlmError(err);
+    console.warn(`[review] report ${reportId}: model review failed (${why}); keeping the rule engine's read`);
+    const row = q.get('SELECT extraction FROM reports WHERE id = ?', reportId);
+    if (!row) return;
+    const ex = { ...parseJson(row.extraction, {}), ai_status: 'failed', ai_error: why };
+    q.run('UPDATE reports SET extraction = ? WHERE id = ?', ex, reportId);
+    publish('report-updated', { reportId, status: 'failed', error: why, report: reportWithPerson(reportId) });
+    return;
+  }
+  const row = q.get('SELECT r.*, a.model FROM reports r JOIN assets a ON a.id = r.asset_id WHERE r.id = ?', reportId);
+  if (!row) return;
+  const base = parseJson(row.extraction, {});
+  const at = nowIso();
+  const fresh = (k) => (ai[k] || []).filter((x) => !(base[k] || []).includes(x));
+  const added = { components: fresh('components'), symptoms: fresh('symptoms'), fault_codes: fresh('fault_codes'), conditions: fresh('conditions'), safety_hazards: fresh('safety_hazards') };
+  const severity = sevRank(ai.severity) > sevRank(base.severity) ? ai.severity : base.severity;
+  const merged = {
+    ...base,
+    summary: ai.summary || base.summary,
+    operator_guidance: ai.operator_guidance || base.operator_guidance,
+    likely_causes: ai.likely_causes?.length ? ai.likely_causes : base.likely_causes || [],
+    memory_facts: [...new Set([...(base.memory_facts || []), ...(ai.memory_facts || [])])],
+    components: [...(base.components || []), ...added.components],
+    symptoms: [...(base.symptoms || []), ...added.symptoms],
+    fault_codes: [...(base.fault_codes || []), ...added.fault_codes],
+    conditions: [...(base.conditions || []), ...added.conditions],
+    safety_hazards: [...(base.safety_hazards || []), ...added.safety_hazards],
+    severity, rules_severity: base.severity, rules_summary: base.summary,
+    ai_mode: 'llm', ai_label: ai.ai_label, ai_status: 'reviewed', ai_seconds: Math.round((Date.now() - started) / 1000),
+  };
+  const delta = newDelta();
+  let alert = null;
+  tx(() => {
+    q.run('UPDATE reports SET summary = ?, severity = ?, extraction = ?, ai_mode = ? WHERE id = ?', merged.summary, merged.severity, merged, 'llm', reportId);
+    const rNode = relabelNode('report', String(reportId), merged.summary.slice(0, 48), { severity, reviewed: true }, delta, at);
+    const mNode = nodeId('model', row.model);
+    const sNode = nodeId('site', row.site_id);
+    const compId = (c) => nodeId('component', c);
+    for (const c of added.components) {
+      upsertNode('component', c, c, { system: componentSystem(c) }, delta, at);
+      upsertEdge(rNode, compId(c), 'AFFECTS', delta, at);
+      upsertEdge(mNode, compId(c), 'HAS_COMPONENT', delta, at);
+    }
+    for (const s of added.symptoms) { upsertNode('symptom', s, s, {}, delta, at); upsertEdge(rNode, nodeId('symptom', s), 'EXHIBITS', delta, at); }
+    for (const c of merged.components.slice(0, 2)) {
+      for (const s of merged.symptoms) {
+        if (added.components.includes(c) || added.symptoms.includes(s)) upsertEdge(compId(c), nodeId('symptom', s), 'SHOWS', delta, at);
+      }
+    }
+    for (const code of added.fault_codes) {
+      upsertNode('code', code, code, {}, delta, at);
+      upsertEdge(rNode, nodeId('code', code), 'RAISED', delta, at);
+      if (merged.components[0]) upsertEdge(nodeId('code', code), compId(merged.components[0]), 'INDICATES', delta, at);
+    }
+    for (const cond of added.conditions) {
+      upsertNode('condition', cond, cond, {}, delta, at);
+      upsertEdge(rNode, nodeId('condition', cond), 'UNDER', delta, at);
+      for (const s of merged.symptoms) upsertEdge(nodeId('symptom', s), nodeId('condition', cond), 'CORRELATES_WITH', delta, at);
+    }
+    for (const hz of added.safety_hazards) {
+      upsertNode('hazard', hz, hz, {}, delta, at);
+      upsertEdge(rNode, nodeId('hazard', hz), 'FLAGS', delta, at);
+      upsertEdge(nodeId('hazard', hz), sNode, 'OBSERVED_AT', delta, at);
+    }
+    for (const fact of (ai.memory_facts || []).filter((f) => !(base.memory_facts || []).includes(f))) {
+      q.run(`INSERT INTO memory_facts (asset_id, fact, kind, source_report_id, fact_key, created_at, updated_at) VALUES (?, ?, 'note', ?, ?, ?, ?)
+             ON CONFLICT(asset_id, fact_key) DO UPDATE SET fact = excluded.fact, updated_at = excluded.updated_at`, row.asset_id, fact, reportId, slug(fact).slice(0, 80), at, at);
+    }
+    const existing = q.get('SELECT * FROM alerts WHERE report_id = ? ORDER BY id LIMIT 1', reportId);
+    if (existing) {
+      const engCase = q.get('SELECT c.* FROM eng_cases c JOIN case_reports cr ON cr.case_id = c.id WHERE cr.report_id = ?', reportId);
+      const fix = rankFixes(row.model, merged.components, merged.symptoms)[0];
+      const raise = sevRank(severity) > sevRank(existing.severity) ? severity : existing.severity;
+      q.run('UPDATE alerts SET title = ?, body = ?, severity = ?, updated_at = ? WHERE id = ?', `${row.asset_id} · ${merged.summary}`, alertBody(merged.operator_guidance, fix, engCase), raise, at, existing.id);
+      alert = alertRow(q.get('SELECT * FROM alerts WHERE id = ?', existing.id));
+    }
+  });
+  const state = recomputeAssetState(row.asset_id);
+  console.log(`[review] report ${reportId} reviewed by ${ai.ai_label} in ${merged.ai_seconds}s (+${Object.values(added).flat().length} entities${severity !== base.severity ? `, severity ${base.severity}→${severity}` : ''})`);
+  publish('report-updated', { reportId, status: 'reviewed', added, escalated: severity !== base.severity, report: reportWithPerson(reportId) });
+  if (delta.nodes.length || delta.edges.length) publish('graph', delta);
+  if (alert) publish('alert-updated', { alert });
+  if (state) publish('asset', { ...getAsset(row.asset_id), ...state });
 }
 
 /** Engineering → field: publish a quick fix, remember it as a fix, and alert every site running that model. */
@@ -249,8 +411,11 @@ export function issueQuickFix(caseId, { title, steps, engineer }) {
   return { case: q.get('SELECT * FROM eng_cases WHERE id = ?', c.id), fixId: out.fixId, sitesNotified: out.alerts.length };
 }
 
-/** Field → memory: resolving an alert records the repair and (optionally) teaches a new fix. */
-export async function resolveAlert(alertId, { personId, resolution, fixId, worked }) {
+/**
+ * Close an alert: mark it resolved, finish its tasks, record whether a known fix worked, and learn a
+ * new field fix from the resolution text. `viaReportId` is the repair report that closed it, if any.
+ */
+export function closeAlert(alertId, { personId, resolution, fixId = null, worked = false, viaReportId = null }) {
   const alert = q.get('SELECT * FROM alerts WHERE id = ?', alertId);
   if (!alert) throw new HttpError(404, 'Alert not found');
   const at = nowIso();
@@ -258,14 +423,15 @@ export async function resolveAlert(alertId, { personId, resolution, fixId, worke
   const asset = alert.asset_id ? getAsset(alert.asset_id) : null;
   let learnedFixId = null;
   tx(() => {
-    q.run(`UPDATE alerts SET status = 'resolved', ack_by = COALESCE(ack_by, ?), resolution = ?, updated_at = ? WHERE id = ?`, personId, resolution || null, at, alertId);
+    q.run(`UPDATE alerts SET status = 'resolved', ack_by = COALESCE(ack_by, ?), resolution = ?, resolved_by_report = ?, updated_at = ? WHERE id = ?`, personId, resolution || null, viaReportId, at, alertId);
     q.run(`UPDATE action_items SET status = 'done', done_by = COALESCE(done_by, ?), done_at = COALESCE(done_at, ?) WHERE alert_id = ? AND status = 'open'`, personId, at, alertId);
     if (fixId) {
       q.run(`UPDATE fixes SET ${worked ? 'success = success + 1' : 'fail = fail + 1'} WHERE id = ?`, fixId);
       q.run('INSERT INTO fix_feedback (fix_id, asset_id, report_id, worked, person_id, created_at) VALUES (?, ?, ?, ?, ?, ?)', fixId, alert.asset_id, alert.report_id, worked ? 1 : 0, personId, at);
     }
-    // Learn a new field fix from the technician's words, unless they confirmed an existing fix worked.
-    if (resolution && report && asset && report.extraction.components?.[0] && !(fixId && worked)) {
+    // Learn a new field fix from the technician's words — only when they describe an actual repair
+    // ("replaced the hose", not "all sorted"), and not when they confirmed an existing fix worked.
+    if (resolution && REPAIR_ACTION_RE.test(resolution) && report && asset && report.extraction.components?.[0] && !(fixId && worked)) {
       const ex = report.extraction;
       const existing = q.get('SELECT id FROM fixes WHERE model = ? AND component = ? AND lower(title) = lower(?)', asset.model, ex.components[0], resolution.trim());
       if (existing) {
@@ -273,33 +439,191 @@ export async function resolveAlert(alertId, { personId, resolution, fixId, worke
         learnedFixId = existing.id;
       } else {
         const person = personId ? q.get('SELECT name FROM people WHERE id = ?', personId) : null;
-        const r = q.run(`INSERT INTO fixes (model, component, symptom, title, steps, source, author, case_id, success, fail, created_at) VALUES (?, ?, ?, ?, '', 'field', ?, ?, 1, 0, ?)`,
-          asset.model, ex.components[0], (ex.symptoms || []).find((s) => s !== 'Warning / fault code') || null, resolution.trim(), person?.name || 'Field technician', alert.case_id, at);
+        const r = q.run(`INSERT INTO fixes (model, component, symptom, title, steps, source, author, case_id, success, fail, created_at, report_id) VALUES (?, ?, ?, ?, '', 'field', ?, ?, 1, 0, ?, ?)`,
+          asset.model, ex.components[0], (ex.symptoms || []).find((s) => s !== 'Warning / fault code') || null, resolution.trim(), person?.name || 'Field technician', alert.case_id, at, viaReportId);
         learnedFixId = Number(r.lastInsertRowid);
       }
     }
   });
-  let repairReport = null;
-  if (resolution && asset) {
-    repairReport = await ingestReport({
-      assetId: asset.id, personId, source: 'repair', forceRules: true,
-      text: `Repair completed: ${resolution.trim()}${report ? ` (resolves: ${report.summary})` : ''}`,
-      overrides: { category: 'maintenance', severity: 'low', needs_engineering: false, is_mechanical_failure: false, action_items: [], memory_facts: [`Repaired: ${resolution.trim()}`] },
-    });
-    if (learnedFixId) {
-      const delta = newDelta();
-      const fNode = upsertNode('fix', String(learnedFixId), resolution.trim().slice(0, 40), { fixId: learnedFixId, source: 'field' }, delta, at);
-      upsertEdge(nodeId('report', String(repairReport.report.id)), fNode, 'APPLIED', delta, at);
-      if (report?.extraction.components?.[0]) upsertEdge(fNode, nodeId('component', report.extraction.components[0]), 'REPAIRS', delta, at);
-      if (asset) upsertEdge(fNode, nodeId('model', asset.model), 'APPLIES_TO', delta, at);
-      publish('graph', delta);
-    }
+  if (learnedFixId) {
+    const delta = newDelta();
+    const fNode = upsertNode('fix', String(learnedFixId), resolution.trim().slice(0, 40), { fixId: learnedFixId, source: 'field' }, delta, at);
+    if (viaReportId) upsertEdge(nodeId('report', String(viaReportId)), fNode, 'APPLIED', delta, at);
+    if (report?.extraction.components?.[0]) upsertEdge(fNode, nodeId('component', report.extraction.components[0]), 'REPAIRS', delta, at);
+    if (asset) upsertEdge(fNode, nodeId('model', asset.model), 'APPLIES_TO', delta, at);
+    publish('graph', delta);
   }
   const state = asset ? recomputeAssetState(asset.id) : null;
   const updated = alertRow(q.get('SELECT * FROM alerts WHERE id = ?', alertId));
   publish('alert-updated', { alert: updated });
   if (state) publish('asset', { ...getAsset(asset.id), ...state });
-  return { alert: updated, learnedFixId, repairReportId: repairReport?.report.id || null };
+  return { alert: updated, learnedFixId };
+}
+
+/** Dashboard path: resolving an alert also files a repair record on the machine. */
+export async function resolveAlert(alertId, { personId, resolution, fixId, worked }) {
+  const alert = q.get('SELECT * FROM alerts WHERE id = ?', alertId);
+  if (!alert) throw new HttpError(404, 'Alert not found');
+  const report = alert.report_id ? hydrateReport(q.get('SELECT * FROM reports WHERE id = ?', alert.report_id)) : null;
+  let repairReport = null;
+  if (resolution && alert.asset_id) {
+    repairReport = await ingestReport({
+      assetId: alert.asset_id, personId, source: 'repair', forceRules: true,
+      text: `Repair completed: ${resolution.trim()}${report ? ` (resolves: ${report.summary})` : ''}`,
+      overrides: { category: 'maintenance', severity: 'low', needs_engineering: false, is_mechanical_failure: false, action_items: [], memory_facts: [`Repaired: ${resolution.trim()}`] },
+    });
+  }
+  const out = closeAlert(alertId, { personId, resolution, fixId, worked, viaReportId: repairReport?.report.id || null });
+  return { ...out, repairReportId: repairReport?.report.id || null };
+}
+
+/** Operator picked which open issue their "it's fixed" report closes. */
+export function resolveFromReport(reportId, alertId, personId) {
+  const report = hydrateReport(q.get('SELECT * FROM reports WHERE id = ?', reportId));
+  if (!report) throw new HttpError(404, 'Report not found');
+  const alert = q.get(`SELECT * FROM alerts WHERE id = ? AND status <> 'resolved'`, alertId);
+  if (!alert) throw new HttpError(404, 'That issue is already closed.');
+  if (alert.asset_id !== report.asset_id) throw new HttpError(400, 'That issue belongs to a different machine.');
+  return closeAlert(alertId, { personId: personId || report.person_id, resolution: report.extraction.resolution || report.raw_text, viaReportId: reportId });
+}
+
+/* ------------------------------ intent helpers ------------------------------ */
+
+const clip = (s, n) => { const t = String(s || '').replace(/\s+/g, ' ').trim(); return t.length > n ? t.slice(0, n - 1) + '…' : t; };
+const SYNC_TIMEOUT_MS = Number(process.env.AI_SYNC_TIMEOUT_MS) || 15_000;
+const REPAIR_ACTION_RE = /\b(replac|clean|blew|blow|tighten|adjust|re-?rout|install|bled|bleed|flush|calibrat|repair|swap|weld|seal|torqu|patch|reset|topped|top up|grease|lubricat|clamp|sleeve|rebuil|realign|recharg|changed|fitted|refill)/i;
+
+/** Which open alert a "fixed" / "update" report is about: the AI's pick, else the only candidate, else a part match. */
+function pickOpenAlert(ex, openAlerts, intent) {
+  if (!openAlerts.length) return null;
+  const byId = openAlerts.find((a) => a.id === ex.references_alert_id);
+  if (byId) return byId;
+  const issues = openAlerts.filter((a) => a.kind === 'mechanical' || a.kind === 'safety');
+  if (issues.length === 1) return issues[0];
+  const parts = new Set(ex.components || []);
+  const matches = issues.filter((a) => {
+    const rep = a.report_id ? q.get('SELECT extraction FROM reports WHERE id = ?', a.report_id) : null;
+    return (parseJson(rep?.extraction, {}).components || []).some((c) => parts.has(c));
+  });
+  if (matches.length === 1) return matches[0];
+  return intent === 'update_existing' && matches.length ? matches[0] : null;
+}
+
+/** Which earlier report a correction refers to: the AI's pick, else the reporter's latest in the last day. */
+function pickCorrectedReport(ex, history, person, newId) {
+  const byId = history.find((h) => h.id === ex.references_report_id && h.id !== newId);
+  if (byId) return byId;
+  const dayAgo = Date.now() - 86400000;
+  return history.find((h) => h.id !== newId && (!person || h.person_id === person.id) && new Date(h.created_at).getTime() > dayAgo && !h.extraction?.retracted) || null;
+}
+
+const MAX_VOICE_DELETE = 3; // more than this from one sentence needs a tap to confirm
+
+/** "Delete my last report": work out which report(s) are meant, take them off the record, or ask. */
+function handleDeleteRequest({ text, ex, asset, person }) {
+  const onMachine = (id) => q.get('SELECT r.*, p.name AS person_name FROM reports r LEFT JOIN people p ON p.id = r.person_id WHERE r.id = ? AND r.asset_id = ?', id, asset.id);
+  let targets = [...new Set(ex.delete_report_ids || [])].map(onMachine).filter(Boolean);
+  let candidates = []; let why = null;
+  let pickedBy = ex.ai_status === 'reviewed' ? 'ai' : 'rules';
+  if (!targets.length) {
+    const m = findReportsToDelete(text, ex, asset, person);
+    targets = m.ids.map(onMachine).filter(Boolean);
+    candidates = m.candidates;
+    why = m.why;
+    pickedBy = 'rules';
+  }
+  const out = {
+    report: null, extraction: ex, intent: 'delete_report', asset: getAsset(asset.id), alert: null, actions: [], engCase: null,
+    similar: [], fixes: [], routed: [], advice: [], answer: null, did: [], deleted: [], needsChoice: null, pickedBy,
+    graph: { newNodes: 0, newEdges: 0, reinforced: 0 },
+  };
+  if (targets.length > MAX_VOICE_DELETE) {
+    out.needsChoice = { kind: 'delete', confirm: true, prompt: `Delete these ${targets.length} reports?`, options: targets.map(reportOption) };
+    out.did.push({ kind: 'note', text: `That matches ${targets.length} reports on ${asset.id}. Nothing is deleted until you confirm.` });
+    return out;
+  }
+  if (targets.length) {
+    const d = deleteReports(targets.map((t) => t.id), { personId: person?.id, reason: text, via: 'voice' });
+    return { ...out, deleted: d.deleted, did: d.did, asset: getAsset(asset.id) };
+  }
+  const options = (candidates.length ? candidates : recentReports(asset.id, 5)).map(reportOption);
+  if (!options.length) { out.did.push({ kind: 'note', text: `${asset.id} has nothing on record to delete.` }); return out; }
+  out.needsChoice = { kind: 'delete', prompt: 'Which report should be deleted?', options };
+  out.did.push({ kind: 'note', text: why === 'ambiguous' ? `More than one report on ${asset.id} fits. Pick the one to delete.` : `Couldn’t tell which report on ${asset.id} you meant. Pick it below, or say it again with the part or the day.` });
+  return out;
+}
+
+/** A correction withdraws the earlier report: its alert closes and it leaves its engineering case. */
+function retractReport(reportId, person, reason) {
+  const at = nowIso();
+  const rep = hydrateReport(q.get('SELECT * FROM reports WHERE id = ?', reportId));
+  if (!rep) return;
+  const delta = newDelta();
+  const touchedCases = [];
+  const closedAlerts = [];
+  tx(() => {
+    const ex = { ...rep.extraction, retracted: { at, by: person?.id || null, reason: clip(reason, 200) } };
+    q.run('UPDATE reports SET extraction = ?, summary = ? WHERE id = ?', ex, rep.summary.endsWith('(withdrawn)') ? rep.summary : `${rep.summary} (withdrawn)`, reportId);
+    for (const a of q.all(`SELECT id FROM alerts WHERE report_id = ? AND status <> 'resolved'`, reportId)) {
+      q.run(`UPDATE alerts SET status = 'resolved', resolution = 'Withdrawn: the reporter corrected this in a later report', updated_at = ? WHERE id = ?`, at, a.id);
+      q.run(`UPDATE action_items SET status = 'done', done_at = ? WHERE alert_id = ? AND status = 'open'`, at, a.id);
+      closedAlerts.push(a.id);
+    }
+    for (const cr of q.all('SELECT case_id FROM case_reports WHERE report_id = ?', reportId)) {
+      q.run('DELETE FROM case_reports WHERE case_id = ? AND report_id = ?', cr.case_id, reportId);
+      q.run("DELETE FROM edges WHERE src = ? AND dst = ? AND type = 'PART_OF'", nodeId('report', String(reportId)), nodeId('case', String(cr.case_id)));
+      touchedCases.push(refreshCase(cr.case_id, at));
+    }
+    relabelNode('report', String(reportId), `${rep.summary.slice(0, 36)} (withdrawn)`, { retracted: true }, delta, at);
+  });
+  recomputeAssetState(rep.asset_id);
+  for (const id of closedAlerts) publish('alert-updated', { alert: alertRow(q.get('SELECT * FROM alerts WHERE id = ?', id)) });
+  for (const c of touchedCases.filter(Boolean)) publish('case', { case: c });
+  publish('report-updated', { reportId, status: 'retracted', report: reportWithPerson(reportId) });
+  publish('graph', delta);
+}
+
+/** More information about an issue that's already open: append it and raise severity if it got worse. */
+function updateOpenAlert(alertId, ex, person) {
+  const a = q.get('SELECT * FROM alerts WHERE id = ?', alertId);
+  if (!a) return;
+  const at = nowIso();
+  const sev = sevRank(ex.severity) > sevRank(a.severity) ? ex.severity : a.severity;
+  const stamp = new Date(at).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+  const body = `${a.body || ''}\nUpdate ${stamp}${person ? ` from ${person.name}` : ''}: ${ex.summary}.${ex.operator_guidance ? ' ' + ex.operator_guidance : ''}`.slice(-1800);
+  q.run(`UPDATE alerts SET severity = ?, body = ?, status = 'open', updated_at = ? WHERE id = ?`, sev, body, at, alertId);
+  for (const it of (ex.action_items || []).slice(0, 3)) {
+    const dup = q.get(`SELECT id FROM action_items WHERE alert_id = ? AND status = 'open' AND lower(text) = lower(?)`, alertId, it.text);
+    if (!dup) q.run(`INSERT INTO action_items (alert_id, site_id, asset_id, text, assignee_role, status, created_at) VALUES (?, ?, ?, ?, ?, 'open', ?)`, alertId, a.site_id, a.asset_id, it.text, it.assignee_role || 'site_manager', at);
+  }
+  publish('alert', { alert: alertRow(q.get('SELECT * FROM alerts WHERE id = ?', alertId)), actions: [], recipients: 0 });
+}
+
+/** Someone asked for a person, part or service: give it to the right role as a task (and an alert if needed). */
+function requestHelp(asset, person, ex, existingAlert, reportId) {
+  const at = nowIso();
+  const role = ROLES.includes(ex.help_role) ? ex.help_role : 'site_manager';
+  let alertId = existingAlert?.id || null;
+  if (!alertId) {
+    const r = q.run(`INSERT INTO alerts (site_id, asset_id, report_id, kind, severity, title, body, audience, status, created_at, updated_at) VALUES (?, ?, ?, 'operational', 'medium', ?, ?, ?, 'open', ?, ?)`,
+      asset.site_id, asset.id, reportId || null, `${asset.id} · Help requested: ${clip(ex.help_request, 80)}`, `${person?.name || 'Someone'} asked for ${ex.help_request}${ex.summary ? ` (${ex.summary})` : ''}.`, [role, 'site_manager'], at, at);
+    alertId = Number(r.lastInsertRowid);
+    publish('alert', { alert: alertRow(q.get('SELECT * FROM alerts WHERE id = ?', alertId)), actions: [], recipients: recipientsFor(asset.site_id, [role, 'site_manager']).length });
+  }
+  const it = q.run(`INSERT INTO action_items (alert_id, site_id, asset_id, text, assignee_role, status, created_at) VALUES (?, ?, ?, ?, ?, 'open', ?)`,
+    alertId, asset.site_id, asset.id, `${clip(ex.help_request, 160)} — requested by ${person?.name || 'the operator'} for ${asset.id}`, role, at);
+  publish('action', { item: q.get('SELECT * FROM action_items WHERE id = ?', Number(it.lastInsertRowid)) });
+  return { role, alertId };
+}
+
+/** Offline next steps: the operator-facing guidance and tasks, plus what worked before. */
+function ruleAdvice(ex, fixes) {
+  const steps = [];
+  if (ex.operator_guidance) steps.push(ex.operator_guidance);
+  for (const a of (ex.action_items || []).filter((x) => x.assignee_role === 'operator')) steps.push(a.text);
+  if (fixes?.[0]) steps.push(`Tell the technician what worked before: ${fixes[0].title}.`);
+  if (!steps.length) steps.push('Stop if anything looks unsafe, then describe the problem in a report so the right person is alerted.');
+  return [...new Set(steps)].slice(0, 4);
 }
 
 export function parseAudience(a) { return parseJson(a.audience, []); }

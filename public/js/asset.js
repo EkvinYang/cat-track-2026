@@ -1,12 +1,13 @@
 // Machine memory page: one asset's whole life — profile, distilled memory, role insights,
 // lifecycle timeline, its slice of the knowledge graph, and a chat with the machine.
 (function () {
-  const { api, esc, ago, dateShort, dateTime, sevPill, statusPill, md, toast, connectStream, store, topbar, icon, machineIcon, emptyState, skeleton, ROLE, SOURCE_ICON, SOURCE_LABEL } = CT;
+  const { api, esc, ago, dateShort, dateTime, sevPill, statusPill, md, toast, connectStream, store, topbar, icon, machineIcon, emptyState, skeleton, ROLE, SOURCE_ICON, SOURCE_LABEL,
+    problemOf, metaLine, kv, keyRow, toneOf, alertDetails, alertTitle } = CT;
   const $ = (id) => document.getElementById(id);
   document.getElementById('top').innerHTML = topbar('');
   const id = (new URLSearchParams(location.search).get('id') || '').toUpperCase();
   const state = { data: null, role: store.get('assetRole', 'operator'), filter: 'all', timeline: [] };
-  if (!id) { $('hero').innerHTML = emptyState({ icon: 'search', title: 'No machine picked', body: 'Open a machine from a job site, or add ?id=EX-0412 to the address.', action: '<a href="/site">Go to job sites</a>' }); return; }
+  if (!id) { $('hero').innerHTML = emptyState({ icon: 'search', title: 'No machine picked', body: 'Open a machine from a job site, or add ?id=EX-0412 to the address.', action: '<a href="/">Go to the dashboard</a>' }); return; }
 
   function ring(h) {
     const c = 2 * Math.PI * 44; const off = c * (1 - h / 100);
@@ -46,15 +47,20 @@
 
   function renderMemory() {
     const mem = state.data.memory;
-    const ic = { pattern: 'alert', environment: 'activity', fleet: 'graph', bulletin: 'wrench', service: 'clock', repair: 'wrench', note: 'history' };
-    $('memory').innerHTML = mem.length ? mem.map((m) => `<div class="mem">${icon(ic[m.kind] || 'history')}<span>${esc(m.text)}</span></div>`).join('') : emptyState({ icon: 'history', title: 'Nothing distilled yet', body: 'After a few reports, repeat problems and links to conditions like heat or dust show up here.' });
+    const ic = { pattern: 'alert', environment: 'activity', fleet: 'graph', bulletin: 'wrench', service: 'clock', repair: 'wrench', note: 'history', document: 'file' };
+    $('memory').innerHTML = mem.length ? mem.map((m) => `<div class="mem">${icon(ic[m.kind] || 'history')}<span>${m.docId ? `<a href="/library?doc=${m.docId}">${esc(m.text.replace(/ \[D\d+\]$/, ''))}</a>` : esc(m.text)}</span></div>`).join('') : emptyState({ icon: 'history', title: 'Nothing distilled yet', body: 'After a few reports, repeat problems and links to conditions like heat or dust show up here.' });
   }
 
   function renderOpen() {
     const { alerts, actions } = state.data;
     $('openItems').innerHTML = (alerts.length || actions.length)
-      ? alerts.map((a) => `<div class="alert-card ${esc(a.severity)}"><div class="t">${esc(a.title)}</div><div class="b mono" style="font-size:12px">${ago(a.created_at)} · ${a.status === 'ack' ? 'seen' : esc(a.status)}</div></div>`).join('') +
-        (actions.length ? `<div style="margin-top:10px">${actions.map((t) => `<div class="mem">${icon('check')}<span><span class="label" style="margin-right:6px">${esc(ROLE[t.assignee_role] || t.assignee_role)}</span>${esc(t.text)}</span></div>`).join('')}</div>` : '')
+      ? alerts.map((a) => keyRow({
+          tone: toneOf(a), title: esc(alertTitle(a)),
+          meta: metaLine([ago(a.created_at), a.status === 'ack' ? 'seen' : 'open']),
+          right: sevPill(a.severity),
+          body: alertDetails(a, [['Tasks', actions.filter((t) => t.alert_id === a.id).map((t) => `<b style="font-weight:600">${esc(ROLE[t.assignee_role] || t.assignee_role)}:</b> ${esc(t.text)}`).join('<br>')]]),
+        })).join('') +
+        (actions.some((t) => !alerts.some((a) => a.id === t.alert_id)) ? keyRow({ title: 'Other open tasks', meta: `${actions.filter((t) => !alerts.some((a) => a.id === t.alert_id)).length} to do`, body: actions.filter((t) => !alerts.some((a) => a.id === t.alert_id)).map((t) => `<div class="mem">${icon('check')}<span><span class="label" style="margin-right:6px">${esc(ROLE[t.assignee_role] || t.assignee_role)}</span>${esc(t.text)}</span></div>`).join('') }) : '')
       : emptyState({ icon: 'check', title: 'Nothing open on this machine', body: 'No unresolved alerts or tasks. New ones appear the moment someone reports a problem.' });
   }
 
@@ -62,7 +68,7 @@
     $('roleTabs').querySelectorAll('button').forEach((b) => b.classList.toggle('on', b.dataset.r === state.role));
     try {
       const out = await api(`/api/assets/${encodeURIComponent(id)}/insights?role=${state.role}`);
-      $('insights').innerHTML = out.items.map((i) => `<div class="ins ${esc(i.level)}"><div class="tt">${esc(i.title)}</div><div class="dd">${esc(i.detail)}</div></div>`).join('');
+      $('insights').innerHTML = out.items.map((i) => keyRow({ tone: i.level === 'high' ? 'high' : i.level === 'medium' ? 'medium' : '', title: esc(i.title), body: `<div style="font-size:14px;color:var(--ink-2)">${esc(i.detail)}</div>` })).join('');
     } catch (err) { $('insights').innerHTML = `<div class="empty">${esc(err.message)}</div>`; }
   }
   $('roleTabs').querySelectorAll('button').forEach((b) => b.onclick = () => { state.role = b.dataset.r; store.set('assetRole', state.role); loadInsights(); });
@@ -75,16 +81,29 @@
     const items = state.timeline.filter((r) => f === 'all' || (f === 'issues' && r.category === 'mechanical') || (f === 'repairs' && r.category === 'maintenance') || (f === 'safety' && r.category === 'safety') || (f === 'telemetry' && r.source === 'telemetry'));
     $('tlCount').textContent = state.timeline.length ? `${state.timeline.length} entries since ${new Date(state.timeline[state.timeline.length - 1].created_at).toLocaleDateString(undefined, { month: 'short', year: 'numeric' })}` : '';
     const emptyCopy = { all: ['Nothing on record yet', 'The first report, repair or sensor alarm for this machine starts its history.'], issues: ['No problems reported', 'Nobody has reported a mechanical problem on this machine.'], repairs: ['No repairs or services logged', 'Repairs logged from the job-site view will appear here.'], safety: ['No safety reports', 'No hazards have been reported around this machine.'], telemetry: ['No sensor alarms', 'Turn on simulated sensors in the job-site view; readings over a limit are filed here.'] }[f];
-    $('timeline').innerHTML = items.map((r) => `<div class="tl-item ${r.category === 'maintenance' ? 'maintenance' : esc(r.severity)}"><span class="dot"></span>
-      <div class="hd"><span class="when">${dateTime(r.created_at)}</span>${r.category !== 'maintenance' ? sevPill(r.severity) : '<span class="tag">service</span>'}<span>${esc(SOURCE_LABEL[r.source] || r.source)}${r.person_name ? ' · ' + esc(r.person_name) : ''}</span></div>
-      <div class="sm">${esc(r.summary)}</div><div class="qt">“${esc(r.raw_text)}”</div>
-      ${r.photo_path ? `<img src="${esc(r.photo_path)}" alt="Photo attached to this report" style="max-width:180px;border-radius:3px;margin-top:6px;border:1px solid var(--line)">` : ''}</div>`).join('') || `<div style="margin-left:-24px">${emptyState({ icon: 'history', title: emptyCopy[0], body: emptyCopy[1] })}</div>`;
+    $('timeline').innerHTML = items.map((r) => {
+      const p = problemOf(r);
+      const problem = ['mechanical', 'safety'].includes(r.category);
+      return keyRow({
+        tone: toneOf(r), title: esc(p.title),
+        meta: metaLine([`<span title="${esc(dateTime(r.created_at))}">${dateShort(r.created_at)}</span>`, esc(r.person_name || SOURCE_LABEL[r.source] || r.source)]),
+        right: problem ? sevPill(r.severity) : `<span class="tag">${r.category === 'maintenance' ? 'repair' : r.source === 'telemetry' ? 'sensor' : 'note'}</span>`,
+        body: kv([
+          ['Said', `<q>${esc(r.raw_text)}</q>`],
+          ['Summary', r.summary !== p.title ? esc(r.summary) : ''],
+          ['Fault code', esc((r.extraction.fault_codes || []).join(', '))],
+          ['Conditions', esc((r.extraction.conditions || []).join(', '))],
+          ['Reported by', esc([r.person_name, (SOURCE_LABEL[r.source] || r.source).toLowerCase(), dateTime(r.created_at)].filter(Boolean).join(' · '))],
+          ['Photo', r.photo_path ? `<img src="${esc(r.photo_path)}" alt="Photo attached to this report" style="max-width:180px;border-radius:3px;border:1px solid var(--line)">` : ''],
+        ]),
+      });
+    }).join('') || emptyState({ icon: 'history', title: emptyCopy[0], body: emptyCopy[1] });
   }
 
   // ---------- mini graph ----------
   async function loadMini() {
     const g = await api(`/api/assets/${encodeURIComponent(id)}/graph`);
-    const COLORS = { site: '#ffcd11', asset: '#ffcd11', model: '#ffcd11', case: '#199e70', fix: '#199e70', component: '#3987e5', condition: '#3987e5', symptom: '#d95926', code: '#d95926', hazard: '#d95926', person: '#8a8f96', report: '#5d6269' };
+    const COLORS = { site: '#ffcd11', asset: '#ffcd11', model: '#ffcd11', case: '#199e70', fix: '#199e70', document: '#199e70', policy: '#199e70', component: '#3987e5', condition: '#3987e5', spec: '#3987e5', procedure: '#3987e5', symptom: '#d95926', code: '#d95926', hazard: '#d95926', person: '#8a8f96', report: '#5d6269' };
     const nodes = new vis.DataSet(g.nodes.map((n) => ({ id: n.id, label: n.type === 'report' ? undefined : n.label, title: n.label, color: COLORS[n.type] || '#888', shape: n.type === 'asset' ? 'dot' : n.type === 'symptom' ? 'triangle' : n.type === 'case' ? 'star' : 'dot', size: n.id === `asset:${id.toLowerCase()}` ? 22 : n.type === 'report' ? 5 : 10, font: { color: '#d9dde1', size: 11, strokeWidth: 3, strokeColor: '#0f1113' } })));
     const edges = new vis.DataSet(g.edges.map((e) => ({ id: e.id, from: e.from, to: e.to, color: { color: 'rgba(140,150,160,.3)' }, width: Math.min(4, 0.6 + Math.log2(e.weight || 1)) })));
     new vis.Network($('mini'), { nodes, edges }, { physics: { solver: 'forceAtlas2Based', stabilization: { iterations: 150 } }, edges: { smooth: false }, interaction: { hover: true } });
@@ -92,7 +111,7 @@
   }
 
   // ---------- ask ----------
-  api('/api/health').then((h) => { $('aiMode').textContent = h.ai === 'claude' ? 'Claude' : 'offline'; }).catch(() => {});
+  api('/api/health').then((h) => { $('aiMode').textContent = h.ai === 'llm' ? h.label : 'offline'; }).catch(() => {});
   const SUGGEST = ['Has this happened before?', 'What should I check before my shift?', 'What fixed it last time?', 'Are other machines having this problem?'];
   $('askChips').innerHTML = SUGGEST.map((s) => `<button class="chip" type="button">${esc(s)}</button>`).join('');
   $('askChips').querySelectorAll('.chip').forEach((c) => c.onclick = () => { $('askInput').value = c.textContent; $('askForm').requestSubmit(); });
@@ -108,7 +127,7 @@
     try {
       const role = state.role === 'fleet_manager' ? 'fleet_manager' : state.role;
       const out = await api('/api/ask', { body: { question: qText, assetId: id, role } });
-      document.getElementById('pending').outerHTML = `<div class="bubble bot md">${md(out.answer)}${out.trace?.length ? `<div class="trace">looked at: ${out.trace.map((t) => esc(t.tool.replace(/_/g, ' '))).join(', ')}</div>` : ''}</div>`;
+      document.getElementById('pending').outerHTML = `<div class="bubble bot md" ${out.pending ? `data-answer="${esc(out.pending)}"` : ''}>${md(out.answer)}${out.pending ? `<div class="trace" data-pending>straight from the record · asking ${esc(out.model)} for a fuller answer…</div>` : ''}</div>`;
     } catch (err) { document.getElementById('pending').outerHTML = `<div class="bubble bot">${emptyState({ icon: 'wifiOff', error: true, title: 'No answer', body: esc(err.message) })}</div>`; }
     log.scrollTop = log.scrollHeight;
   };
@@ -116,10 +135,20 @@
   let t = null;
   connectStream({
     report: ({ report }) => { if (report.asset_id === id) { toast(`New on this machine: ${esc(report.summary)}`); clearTimeout(t); t = setTimeout(load, 300); } },
+    'report-updated': ({ report }) => { if (report?.asset_id === id) { clearTimeout(t); t = setTimeout(load, 300); } },
+    'report-deleted': ({ reports }) => { if (reports.some((r) => r.asset_id === id)) { clearTimeout(t); t = setTimeout(() => { load(); loadMini().catch(() => {}); }, 300); } },
+    'report-restored': ({ reports }) => { if (reports.some((r) => r.asset_id === id)) { clearTimeout(t); t = setTimeout(() => { load(); loadMini().catch(() => {}); }, 300); } },
+    answer: (ev) => {
+      const el = document.querySelector(`[data-answer="${CSS.escape(ev.id)}"]`);
+      if (!el) return;
+      if (ev.error) { el.querySelector('[data-pending]').textContent = `straight from the record · the AI didn’t answer (${ev.error})`; return; }
+      el.outerHTML = `<div class="bubble bot md">${md(ev.answer)}<div class="trace">${esc(ev.model)} · ${ev.seconds}s</div></div>`;
+      $('askLog').scrollTop = $('askLog').scrollHeight;
+    },
     asset: (a) => { if (a.id === id) { clearTimeout(t); t = setTimeout(load, 300); } },
   }, $('live'));
 
   $('insights').innerHTML = skeleton(4); $('memory').innerHTML = skeleton(3); $('timeline').innerHTML = skeleton(6);
-  load().catch((err) => { $('hero').innerHTML = emptyState({ icon: 'search', error: true, title: `Couldn’t open ${esc(id)}`, body: esc(err.message), action: '<a href="/site">Back to job sites</a>' }); $('insights').innerHTML = ''; $('memory').innerHTML = ''; $('timeline').innerHTML = ''; });
+  load().catch((err) => { $('hero').innerHTML = emptyState({ icon: 'search', error: true, title: `Couldn’t open ${esc(id)}`, body: esc(err.message), action: '<a href="/">Back to the dashboard</a>' }); $('insights').innerHTML = ''; $('memory').innerHTML = ''; $('timeline').innerHTML = ''; });
   loadMini().catch(() => { $('mini').innerHTML = '<div class="empty">Graph unavailable</div>'; });
 })();

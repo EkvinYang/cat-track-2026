@@ -46,7 +46,7 @@ export const SYMPTOMS = [
   { name: 'Vibration', re: /vibrat|shak(e|ing|y)|wobbl/ },
   { name: 'Smoke', re: /smok/ },
   { name: 'Engine derate', re: /derat/ },
-  { name: 'Loss of power', re: /loss of power|lost power|low power|no power\b|sluggish|bogg|\bweak|underpower|lacks? power|slow (to )?respon|responding slow(ly)?|slow (hydraulics|cycle|swing|lift)/ },
+  { name: 'Loss of power', re: /loss of power|lost power|low power|no power\b|sluggish|bogg|\bweak|underpower|lacks? power|slow (to )?respon|responding slow(ly)?|slow (hydraulic|cycle|swing|lift)|sluggish hydraulic/ },
   { name: 'No-start', re: /won'?t start|no[- ]start|not starting|doesn'?t start|fails? to start|dead battery|won'?t crank/ },
   { name: 'Warning / fault code', re: /warning|alarm|\bfault|error code|check engine|\bcodes?\b|\bcid\b|\bfmi\b|\bspn\b/ },
   { name: 'Crack / damage', re: /crack|\bbroke|broken|\bbent\b|damag|\btear\b|\btorn\b|snapp|split|\bdent/ },
@@ -120,3 +120,47 @@ export function extractFaultCodes(text) {
 }
 
 export const normalizeCode = (c) => String(c).toUpperCase().trim().replace(/\s+/g, ' ').replace(/(CID|SPN|FMI)(\d)/g, '$1 $2');
+
+/* ------------------------------ job-site issue types ------------------------------ */
+// What kind of occurrence a report is, for the map: one icon per type, independent of urgency.
+export const ISSUE_TYPES = {
+  hazard: 'Safety hazard',
+  malfunction: 'Malfunction',
+  mechanical: 'Wear & damage',
+  weather: 'Weather & ground',
+  logistics: 'Logistics',
+  maintenance: 'Repair & service',
+  note: 'Note or question',
+};
+const MALFUNCTION_SYMPTOMS = new Set(['Overheating', 'Engine derate', 'Loss of power', 'No-start', 'Warning / fault code', 'Low pressure', 'Erratic operation', 'Spongy / weak braking', 'Not cooling / no airflow', 'Electrical fault', 'Smoke', 'Burning smell']);
+const MECHANICAL_SYMPTOMS = new Set(['Leak', 'Abnormal noise', 'Vibration', 'Crack / damage', 'Wear', 'Low fluid level', 'Fluid contamination']);
+const CONTROL_PARTS = new Set(['Electrical system', 'Sensors & display', 'Operator controls', 'Lights']);
+const CRITICAL_HAZARDS = new Set(HAZARDS.filter((h) => h.critical).map((h) => h.name));
+const WEATHER_CONDITIONS = new Set(['High ambient heat', 'Wet / muddy ground', 'Dusty', 'Cold weather', 'Soft ground']);
+const WEATHER_RE = /\b(rain(ing|ed)?|storms?|wind(y)?|lightning|heat ?wave|flood(ed|ing)?|fog(gy)?|snow(ing)?|ic(e|y)|mud(dy)?|dust storm|visibility|weather|wash ?out|washed out|puddl)/;
+const LOGISTICS_RE = /\b(fuel (truck|delivery|run)|deliver(y|ies|ed)?|parts? (on order|arriv|delay|shortage)|schedul|delay(ed)?|waiting (on|for)|crew|permit|survey|materials?|traffic|staging|loading area|lowboy|transport|shift change|road (closed|blocked)|out of fuel|need(s)? (a |more )?(fuel|parts|operator|spotter))/;
+
+/** Classify a report (row with category, severity, source, raw_text and extraction) into an ISSUE_TYPES key. */
+export function issueClass(r) {
+  const ex = (typeof r.extraction === 'string' ? (() => { try { return JSON.parse(r.extraction); } catch { return {}; } })() : r.extraction) || {};
+  const text = String(r.raw_text || '').toLowerCase();
+  const comps = ex.components || []; const syms = ex.symptoms || []; const hazards = ex.safety_hazards || [];
+  if (ISSUE_TYPES[ex.issue_override]) return ex.issue_override; // someone set it by hand in the report log
+  if (r.category === 'maintenance' || ex.intent === 'resolved') return 'maintenance';
+  // A machine fault becomes a safety hazard only when people are clearly at risk right now (a
+  // critical hazard on a critical report); otherwise the part and problem say more.
+  if (r.category === 'safety' || (hazards.length && (!comps.length || (r.severity === 'critical' && hazards.some((h) => CRITICAL_HAZARDS.has(h)))))) return 'hazard';
+  if (!comps.length && !syms.length) {
+    if (r.severity === 'critical') return 'hazard'; // critical with no machine part: people or the site are at risk
+    if (LOGISTICS_RE.test(text) || ex.intent === 'request_help') return 'logistics';
+    if (WEATHER_RE.test(text) || (ex.conditions || []).some((c) => WEATHER_CONDITIONS.has(c))) return 'weather';
+    if (r.category === 'operational') return 'logistics';
+    return 'note';
+  }
+  // A part named without anything wrong with it ("fuel truck hasn't shown up") is about supply, not the machine.
+  if (!syms.length && !(ex.fault_codes || []).length && (LOGISTICS_RE.test(text) || ex.intent === 'request_help')) return 'logistics';
+  const primary = syms.find((s) => s !== 'Warning / fault code') || syms[0];
+  if (MECHANICAL_SYMPTOMS.has(primary)) return 'mechanical';
+  if (MALFUNCTION_SYMPTOMS.has(primary) || r.source === 'telemetry' || (ex.fault_codes || []).length || comps.some((c) => CONTROL_PARTS.has(c))) return 'malfunction';
+  return 'mechanical';
+}

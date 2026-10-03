@@ -1,7 +1,7 @@
 // CAT Engineering: fleet-wide mechanical cases with field evidence, root-cause analysis,
 // and the two ways back out: a quick fix to the field, or a design change to the product.
 (function () {
-  const { api, esc, ago, dateShort, sevPill, md, toast, connectStream, store, topbar, modal, icon, emptyState, skeleton, ROLE, SOURCE_LABEL } = CT;
+  const { api, esc, ago, dateShort, sevPill, md, toast, connectStream, store, topbar, modal, icon, emptyState, skeleton, ROLE, SOURCE_LABEL, metaLine, kv, keyRow, toneOf } = CT;
   const $ = (id) => document.getElementById(id);
   document.getElementById('top').innerHTML = topbar('/engineering');
 
@@ -91,24 +91,32 @@
       </div>
 
       <div class="analysis">
-        <div class="row spread wrap"><b>Root cause, from the evidence</b><button class="btn sm" id="analyzeBtn">${icon('search')} ${c.ai_analysis ? 'Read it again' : 'Read the evidence'}</button></div>
-        <div class="md" id="aiText" style="margin-top:10px">${c.ai_analysis ? md(c.ai_analysis) : `<span class="muted">Not analysed yet. This reads all ${total} reports, their conditions and fault codes, and every repair on these machines, then proposes a cause, a field fix and a design change.</span>`}</div>
+        <div class="row spread wrap"><span><b>Root cause, from the evidence</b><span class="muted" style="font-size:13px"> · ${c.ai_analysis ? (c.ai_analysis_by && c.ai_analysis_by !== 'rules' ? 'written by ' + esc(c.ai_analysis_by) : 'counted by the rule engine') : 'not analysed yet'}</span></span><button class="btn sm" id="analyzeBtn">${icon('search')} ${c.ai_analysis ? 'Read it again' : 'Read the evidence'}</button></div>
+        <details class="dd" id="aiBox" style="margin-top:10px" ${analysisPendingFor === c.id || analysisOpen === c.id ? 'open' : ''}><summary><span>${c.ai_analysis ? 'Show the write-up' : 'What this does'}</span>${icon('chevron', 'chev')}</summary>
+        <div class="md dd-body" id="aiText">${analysisPendingFor === c.id ? `<div class="muted" style="font-size:13px;margin-bottom:10px" id="aiPending">${esc(analysisModel)} is reading all ${total} reports; its write-up will replace this when it arrives.</div>` : ''}${c.ai_analysis ? md(c.ai_analysis) : `<span class="muted">Reads all ${total} reports, their conditions and fault codes, and every repair on these machines, then proposes a cause, a field fix and a design change.</span>`}</div></details>
       </div>
 
       <div class="two">
         <div>
           <div class="sec-title">From the field · ${total} report${total === 1 ? '' : 's'}</div>
-          ${d.reports.map((r) => `<div class="ev"><div class="row spread wrap"><span class="row" style="gap:8px">${sevPill(r.severity)}<span class="id">${esc(r.asset_id)}</span></span><span class="mono faint" style="font-size:11px">${dateShort(r.created_at)}</span></div>
-            <q>${esc(r.raw_text)}</q>
-            <div class="by">${esc(r.person_name || SOURCE_LABEL[r.source])}${r.person_role ? ', ' + ROLE[r.person_role].toLowerCase() : ''} · ${esc(r.site_name)} · ${Math.round(r.smu_hours).toLocaleString()} h${(r.extraction.conditions || []).length ? ' · ' + esc(r.extraction.conditions.join(', ').toLowerCase()) : ''}</div>
-            ${r.photo_path ? `<img src="${esc(r.photo_path)}" alt="Photo from the field">` : ''}</div>`).join('')}
+          ${d.reports.map((r) => keyRow({
+            tone: toneOf(r),
+            title: `<a class="id" href="/asset?id=${encodeURIComponent(r.asset_id)}">${esc(r.asset_id)}</a> <span style="font-weight:500">${esc(r.site_name || '')}</span>`,
+            meta: metaLine([dateShort(r.created_at), `${Math.round(r.smu_hours).toLocaleString()} h`, esc((r.extraction.conditions || []).join(', ').toLowerCase()), esc((r.extraction.fault_codes || []).join(', '))]),
+            right: sevPill(r.severity),
+            body: kv([
+              ['Said', `<q>${esc(r.raw_text)}</q>`],
+              ['Reported by', esc(`${r.person_name || SOURCE_LABEL[r.source]}${r.person_role ? ', ' + ROLE[r.person_role].toLowerCase() : ''}`)],
+              ['Photo', r.photo_path ? `<img src="${esc(r.photo_path)}" alt="Photo from the field" style="max-width:160px;border-radius:3px;border:1px solid var(--line)">` : ''],
+            ]),
+          })).join('')}
         </div>
         <div>
           <div class="sec-title">Fixes tried, ranked by field results</div>
           ${d.fixes.length ? d.fixes.map((f) => `<div class="fix-row"><div class="row spread" style="align-items:flex-start;gap:12px"><b style="font-weight:600">${esc(f.title)}</b><span class="tag ${f.source === 'engineering' ? 'cat' : ''}">${f.source === 'engineering' ? 'CAT' : 'field'}</span></div>
             <div class="conf" title="${f.confidence}% estimated success"><i style="width:${f.confidence}%"></i></div><div class="muted" style="font-size:12px;margin-top:5px">Worked ${f.success} of ${f.success + f.fail} times · ${esc(f.author || 'unknown')}</div></div>`).join('')
             : emptyState({ icon: 'wrench', title: 'No fix on record yet', body: 'The first technician to log a repair for this will create one, and every later result will re-rank it.' })}
-          ${d.repairs.length ? `<div class="sec-title" style="margin-top:22px">Recent repairs on these machines</div>${d.repairs.slice(0, 4).map((r) => `<div class="ev" style="padding:9px 0"><div class="row spread"><span class="id">${esc(r.asset_id)}</span><span class="mono faint" style="font-size:11px">${dateShort(r.created_at)}</span></div><div style="font-size:14px;margin-top:3px">${esc(r.raw_text)}</div></div>`).join('')}` : ''}
+          ${d.repairs.length ? `<div class="sec-title" style="margin-top:22px">Recent repairs on these machines</div>${d.repairs.slice(0, 4).map((r) => keyRow({ tone: 'repair', title: esc(r.asset_id), meta: dateShort(r.created_at), body: `<div style="font-size:14px;color:var(--ink-2)">${esc(r.raw_text)}</div>` })).join('')}` : ''}
           ${c.quick_fix ? `<div class="card" style="margin-top:18px;box-shadow:inset 4px 0 0 var(--cat)"><div class="sec-title" style="margin:0 0 4px">In the field now</div>${esc(c.quick_fix)}</div>` : ''}
           ${c.product_action ? `<div class="card" style="margin-top:10px"><div class="sec-title" style="margin:0 0 4px">Design change planned</div>${esc(c.product_action)}${c.root_cause ? `<div class="muted" style="font-size:13px;margin-top:6px">Cause: ${esc(c.root_cause)}</div>` : ''}</div>` : ''}
           <div class="sec-title" style="margin-top:22px">Next step</div>
@@ -128,10 +136,15 @@
 
   async function analyze() {
     const btn = $('analyzeBtn'); btn.disabled = true; btn.textContent = 'Reading…';
+    $('aiBox').open = true;
     $('aiText').innerHTML = `${skeleton(4)}`;
     try {
       const out = await api(`/api/cases/${state.selected}/analyze`, { body: {} });
-      $('aiText').innerHTML = md(out.analysis);
+      analysisOpen = state.selected;
+      $('aiBox').open = true;
+      $('aiText').innerHTML = md(out.analysis) + (out.pending ? `<div class="muted" style="font-size:13px;margin-top:10px;border-top:1px dashed var(--line-strong);padding-top:8px" id="aiPending">That’s the rule engine’s count. ${esc(out.model)} is reading all ${state.detail.reports.length} reports for a root cause; its write-up will replace this, usually within a minute.</div>` : '');
+      analysisPendingFor = out.pending ? state.selected : null;
+      analysisModel = out.model;
       btn.innerHTML = `${icon('search')} Read it again`;
     } catch (err) { $('aiText').innerHTML = emptyState({ icon: 'wifiOff', error: true, title: 'Analysis failed', body: esc(err.message) }); btn.innerHTML = `${icon('search')} Try again`; }
     btn.disabled = false;
@@ -173,17 +186,28 @@
     };
   }
 
+  let analysisPendingFor = null; let analysisModel = ''; let analysisOpen = null;
+
   async function setStatus(status) {
     try { await api(`/api/cases/${state.selected}/status`, { body: { status, engineer: me() } }); loadCases(); } catch (err) { toast(esc(err.message), 'high'); }
   }
 
   let t = null;
   connectStream({
-    case: ({ case: c, reportId }) => {
+    case: ({ case: c, reportId, analysis, error }) => {
+      if (analysis && c.id === analysisPendingFor) {
+        analysisPendingFor = null;
+        toast(analysis === 'llm' ? `${esc(c.ai_analysis_by)} finished its root-cause write-up for case #${c.id}.` : `The AI write-up for case #${c.id} didn’t come back (${esc(error || 'no response')}). The rule engine’s count stays.`, analysis === 'llm' ? 'good' : 'high');
+      }
+      if (analysis === 'failed' && c.id === state.selected) { const p = document.getElementById('aiPending'); if (p) p.textContent = `The AI write-up didn’t come back (${error || 'no response'}). Showing the rule engine’s count.`; return; }
       clearTimeout(t); t = setTimeout(loadCases, 300);
       if (reportId) toast(`New report on <b>case #${c.id}</b>, ${esc(c.title)}. That’s ${c.occurrences} now.`, c.priority === 'P1' ? 'high' : '');
     },
     fix: () => { clearTimeout(t); t = setTimeout(loadCases, 300); },
+    'case-removed': ({ id }) => {
+      if (state.selected === id) { state.selected = null; toast(`Case #${id} was removed: the only report behind it was deleted.`); }
+      clearTimeout(t); t = setTimeout(loadCases, 300);
+    },
   }, $('live'));
 
   boot().catch((err) => { $('detail').innerHTML = emptyState({ icon: 'wifiOff', error: true, title: 'Couldn’t load the engineering view', body: esc(err.message) }); });

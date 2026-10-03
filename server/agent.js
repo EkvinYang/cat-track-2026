@@ -1,11 +1,12 @@
-// Human + agent collaboration: a tool-using Claude agent that can read the machine memory and
+// Human + agent collaboration: a tool-using model agent that can read the machine memory and
 // knowledge graph, and take autonomous actions (create action items, notify a site crew).
-// Without an API key it falls back to a deterministic retrieval answerer.
+// With no AI provider configured (or if the provider fails) it falls back to a deterministic answerer.
 import { q, nowIso, parseJson, alertRow } from './db.js';
-import { createMessage, textOf, MODEL, llmEnabled, describeLlmError } from './llm.js';
-import { getAsset, assetMemory, recentReports, rankFixes, normalizeAssetId, openAlertsForAsset } from './memory.js';
+import { runToolAgent, complete, llmEnabled, llmInfo, agentMode, contextChars, describeLlmError } from './llm.js';
+import { getAsset, assetMemory, recentReports, rankFixes, fixesForModel, normalizeAssetId, openAlertsForAsset } from './memory.js';
 import { matchAll, COMPONENTS, SYMPTOMS, ROLES } from './vocab.js';
 import { publish } from './events.js';
+import { searchDocs } from './docs.js';
 
 const trunc = (s, n) => (s && s.length > n ? s.slice(0, n - 1) + '…' : s || '');
 
@@ -97,15 +98,17 @@ const TOOLS = [
     input_schema: { type: 'object', properties: { status: { type: 'string', enum: ['new', 'investigating', 'quick_fix_issued', 'product_update', 'closed'] } } } },
   { name: 'find_fixes', description: 'Known fixes ranked by real field success rate for a model + component/symptom.',
     input_schema: { type: 'object', properties: { model: { type: 'string' }, component: { type: 'string' }, symptom: { type: 'string' } }, required: ['model'] } },
+  { name: 'search_documents', description: 'Search the product library: spec sheets, policies and service bulletins engineers uploaded. Use it for specs, service intervals, procedures, policies and what a fault code means. Cite results as [D<id>].',
+    input_schema: { type: 'object', properties: { query: { type: 'string' }, model: { type: 'string', description: 'e.g. "Cat 336" to prefer documents about that model' } }, required: ['query'] } },
   { name: 'create_action_item', description: 'ACTION: add a task to a job-site action list for a machine. Only use when the user asks you to do/assign/schedule something.',
     input_schema: { type: 'object', properties: { asset_id: { type: 'string' }, text: { type: 'string' }, assignee_role: { type: 'string', enum: ROLES } }, required: ['asset_id', 'text', 'assignee_role'] } },
   { name: 'notify_site', description: 'ACTION: push an alert to everyone on a job site. Only use when the user asks you to notify/tell/warn a crew.',
     input_schema: { type: 'object', properties: { site_id: { type: 'string' }, title: { type: 'string' }, message: { type: 'string' }, severity: { type: 'string', enum: ['low', 'medium', 'high', 'critical'] } }, required: ['site_id', 'title', 'message'] } },
 ];
 
-const HANDLERS = { search_memory: searchMemory, get_machine: getMachine, fleet_overview: fleetOverview, list_engineering_cases: listCases, find_fixes: findFixes, create_action_item: createActionItem, notify_site: notifySite };
+const HANDLERS = { search_documents: ({ query, model }) => searchDocs(String(query || ''), { model: model || null, limit: 4 }), search_memory: searchMemory, get_machine: getMachine, fleet_overview: fleetOverview, list_engineering_cases: listCases, find_fixes: findFixes, create_action_item: createActionItem, notify_site: notifySite };
 
-function systemPrompt(ctx) {
+function systemPrompt(ctx, mode = 'tools') {
   const who = ctx.personName ? `${ctx.personName}, a ${ctx.role.replace('_', ' ')}` : `a ${ctx.role.replace('_', ' ')}`;
   const tailor = {
     operator: 'Operators are in the cab: answer in 2-4 short plain sentences, safety first, no jargon.',
@@ -118,36 +121,11 @@ function systemPrompt(ctx) {
   return `You are the Cat Track memory agent: the voice of a persistent memory layer for Caterpillar machines and job sites.
 You are talking with ${who}. ${tailor}
 ${ctx.assetId ? `They are looking at machine ${ctx.assetId}; questions about "it" or "this machine" refer to it.` : ''}
-Always ground answers in the memory by calling tools first. Cite reports as [R<id>] and machines by ID. If the memory doesn't contain the answer, say so.
-Only call create_action_item or notify_site when the user explicitly asks for an action; confirm what you did.
+${mode === 'rag'
+    ? 'Answer ONLY from the records provided with the question. Cite reports as [R<id>], product documents as [D<id>], and machines by ID. If the records don\'t contain the answer, say so plainly. You cannot take actions in this mode; if asked to assign or notify, say which task or notice you would create.'
+    : 'Always ground answers in the memory by calling tools first. Cite reports as [R<id>], product documents as [D<id>], and machines by ID. For specs, service intervals, policies or what a fault code means, search the product library. If the memory doesn\'t contain the answer, say so.\nOnly call create_action_item or notify_site when the user explicitly asks for an action; confirm what you did.'}
+Specs, intervals and rules apply only to the models, machine families or conditions they name (see applies_to and the text): never carry a figure or rule from one model over to another, and say which machine each figure is for. Don't pad answers with general advice the records don't support.
 Keep answers under 170 words. Use short bullet lists when listing more than two items. Today is ${new Date().toISOString().slice(0, 10)}.`;
-}
-
-async function claudeAnswer(question, ctx) {
-  const messages = [{ role: 'user', content: question }];
-  const trace = [];
-  for (let turn = 0; turn < 6; turn++) {
-    const res = await createMessage({ model: MODEL, max_tokens: 8000, system: systemPrompt(ctx), tools: TOOLS, tool_choice: { type: 'auto' }, output_config: { effort: 'medium' }, messages });
-    if (res.stop_reason === 'refusal') return { answer: 'Sorry — I can\'t help with that request.', trace, mode: 'claude' };
-    messages.push({ role: 'assistant', content: res.content });
-    if (res.stop_reason !== 'tool_use') return { answer: textOf(res) || '(no answer)', trace, mode: 'claude' };
-    const results = [];
-    for (const block of res.content) {
-      if (block.type !== 'tool_use') continue;
-      const handler = HANDLERS[block.name];
-      let output; let isError = false;
-      try {
-        if (!handler) throw new Error(`Unknown tool ${block.name}`);
-        if (typeof block.input !== 'object' || block.input === null) throw new Error('Tool input must be an object');
-        output = handler(block.input, ctx);
-        if (output && output.error) isError = true;
-      } catch (err) { output = { error: err.message }; isError = true; }
-      trace.push({ tool: block.name, input: block.input, ok: !isError });
-      results.push({ type: 'tool_result', tool_use_id: block.id, content: JSON.stringify(output).slice(0, 12000), is_error: isError });
-    }
-    messages.push({ role: 'user', content: results });
-  }
-  return { answer: 'I gathered a lot of context but ran out of steps — try a narrower question.', trace, mode: 'claude' };
 }
 
 /** Offline answerer: pattern-matches the question onto the same tools. */
@@ -177,6 +155,15 @@ function rulesAnswer(question, ctx) {
     if (!bad.length) lines.push('- Everything is operational.');
     return { answer: lines.join('\n'), trace, mode: 'rules' };
   }
+  if (/\b(spec|specs|specification|policy|policies|interval|how often|procedure|bulletin|rated|capacity|torque|pressure|horsepower|kw|weight|new product)\b/.test(ql)) {
+    const docs = searchDocs(question, { model: assetId ? getAsset(assetId)?.model : null, limit: 3 });
+    trace.push({ tool: 'search_documents', input: { query: question }, ok: true });
+    if (docs.length) {
+      lines.push(`**From the product library:**`);
+      for (const d of docs) lines.push(`- [D${d.doc_id}] **${d.title}** (${d.doc_type}): “${trunc(d.excerpt, 260)}”`);
+      return { answer: lines.join('\n'), trace, mode: 'rules' };
+    }
+  }
   const topical = matchAll(COMPONENTS, ql).length || matchAll(SYMPTOMS, ql).length || /code|cid|fmi/.test(ql);
   if (assetId && getAsset(assetId)) {
     const m = getMachine({ asset_id: assetId }); trace.push({ tool: 'get_machine', input: { asset_id: assetId }, ok: true });
@@ -205,7 +192,7 @@ function rulesAnswer(question, ctx) {
     }
     return { answer: lines.join('\n'), trace, mode: 'rules' };
   }
-  return { answer: 'I can answer from the fleet memory. Try: "What\'s wrong with EX-0412?", "Which machines are down?", "Any overheating on the 777s?", or "Show engineering cases". (Add an ANTHROPIC_API_KEY for full natural-language reasoning.)', trace, mode: 'rules' };
+  return { answer: 'I can answer from the fleet memory. Try: "What\'s wrong with EX-0412?", "Which machines are down?", "Any overheating on the 777s?", or "Show engineering cases". (Configure an AI provider in .env for full natural-language answers.)', trace, mode: 'rules' };
 }
 
 export async function ask({ question, assetId, role = 'operator', personId }) {
@@ -213,12 +200,83 @@ export async function ask({ question, assetId, role = 'operator', personId }) {
   if (!qText) return { answer: 'Ask me anything about your machines.', trace: [], mode: 'rules' };
   const person = personId ? q.get('SELECT * FROM people WHERE id = ?', personId) : null;
   const ctx = { role: person?.role || role, personName: person?.name, assetId: assetId ? normalizeAssetId(assetId) : null };
+  const instant = rulesAnswer(qText, ctx);
+  // Actions already taken by the rule path don't need a second opinion.
+  if (!llmEnabled() || instant.trace.some((t) => t.tool === 'create_action_item')) return instant;
+  const id = `a${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+  answerWithModel(id, qText, ctx).catch((err) => console.warn('[agent] background answer failed:', err.message));
+  return { ...instant, pending: id, model: llmInfo().label };
+}
+
+/** Everything the record holds that bears on the question, gathered up front for a single model call. */
+function gatherContext(question, ctx) {
+  const ql = question.toLowerCase();
+  const idMatch = question.match(/\b([A-Za-z]{2})[- ]?(\d{3,4})\b/);
+  const assetId = idMatch && getAsset(normalizeAssetId(idMatch[0])) ? normalizeAssetId(idMatch[0]) : ctx.assetId;
+  const parts = {}; const trace = [];
+  const note = (tool, input) => trace.push({ tool, input, ok: true });
+  if (assetId && getAsset(assetId)) {
+    parts.machine = getMachine({ asset_id: assetId }); note('get_machine', { asset_id: assetId });
+    parts.this_machine_reports = searchMemory({ query: question, asset_id: assetId, limit: 8 }); note('search_memory', { asset_id: assetId });
+    parts.same_model_reports = searchMemory({ query: question, model: parts.machine.model, limit: 8 }).filter((r) => r.asset !== assetId);
+  } else {
+    const modelMatch = ql.match(/\b(336|320|777|950|966|140|d6|d8)s?\b/);
+    const model = modelMatch ? `Cat ${modelMatch[1].toUpperCase()}` : undefined;
+    parts.matching_reports = searchMemory({ query: question, model, limit: 12 }); note('search_memory', { query: question, model });
+  }
+  if (!assetId || /fleet|status|down|attention|which machines|all machines|overview|health|risk/.test(ql)) { parts.fleet = fleetOverview({}); note('fleet_overview', {}); }
+  // Repairs, fixes and engineering cases for every machine/model the matching reports touch, so the model
+  // never concludes "nothing was fixed" just because the question didn't name the part.
+  const hits = [...(parts.this_machine_reports || []), ...(parts.same_model_reports || []), ...(parts.matching_reports || [])];
+  const assets = [...new Set([assetId, ...hits.map((h) => h.asset)].filter(Boolean))].slice(0, 8);
+  const models = [...new Set([parts.machine?.model, ...hits.map((h) => h.model)].filter(Boolean))].slice(0, 4);
+  if (assets.length) {
+    parts.repairs_on_these_machines = q.all(`SELECT id, asset_id, created_at, raw_text FROM reports WHERE category = 'maintenance' AND asset_id IN (${assets.map(() => '?').join(',')}) ORDER BY created_at DESC LIMIT 12`, ...assets)
+      .map((r) => ({ id: r.id, date: r.created_at.slice(0, 10), asset: r.asset_id, text: trunc(r.raw_text, 160) }));
+  }
+  if (models.length) {
+    parts.known_fixes = models.flatMap((m) => fixesForModel(m).map((f) => ({ model: f.model || 'any', component: f.component, symptom: f.symptom, fix: f.title, worked: f.success, failed: f.fail, source: f.source })));
+    parts.engineering_cases = listCases({}).filter((c) => models.includes(c.model));
+    note('find_fixes', { models }); note('list_engineering_cases', { models });
+  } else if (/case|engineering|pattern|fleet[- ]wide|design|other machines/.test(ql)) {
+    parts.engineering_cases = listCases({}); note('list_engineering_cases', {});
+  }
+  const docs = searchDocs(question, { model: parts.machine?.model || models[0] || null, limit: 3 });
+  if (docs.length) { parts.product_documents = docs; note('search_documents', { query: question }); }
+  return { parts, trace };
+}
+
+async function modelAnswer(question, ctx) {
+  if (agentMode() === 'rag') {
+    const { parts, trace } = gatherContext(question, ctx);
+    const answer = await complete({ system: systemPrompt(ctx, 'rag'), prompt: `Question: ${question}\n\nRecords from Cat Track (JSON):\n${JSON.stringify(parts).slice(0, contextChars())}`, maxTokens: 1500 });
+    return { answer: answer || '(no answer)', trace };
+  }
+  return runToolAgent({ system: systemPrompt(ctx), question, tools: TOOLS, handlers: HANDLERS, ctx });
+}
+
+/** Answer now (awaited) — used when a field report turns out to be a question. */
+export async function answerNow({ question, assetId, role = 'operator', personId }) {
+  const qText = String(question || '').trim();
+  const person = personId ? q.get('SELECT * FROM people WHERE id = ?', personId) : null;
+  const ctx = { role: person?.role || role, personName: person?.name, assetId: assetId ? normalizeAssetId(assetId) : null };
   if (!llmEnabled()) return rulesAnswer(qText, ctx);
   try {
-    return await claudeAnswer(qText, ctx);
+    return { ...(await modelAnswer(qText, ctx)), mode: 'llm', model: llmInfo().label };
   } catch (err) {
-    console.warn('[agent] Claude failed, using rules:', describeLlmError(err));
-    return { ...rulesAnswer(qText, ctx), note: `Claude unavailable (${describeLlmError(err)}); answered from rules.` };
+    console.warn('[agent] answerNow failed, using rules:', describeLlmError(err));
+    return { ...rulesAnswer(qText, ctx), note: `AI unavailable (${describeLlmError(err)})` };
+  }
+}
+
+async function answerWithModel(id, question, ctx) {
+  const started = Date.now();
+  try {
+    const out = await modelAnswer(question, ctx);
+    publish('answer', { id, ...out, model: llmInfo().label, seconds: Math.round((Date.now() - started) / 1000) });
+  } catch (err) {
+    console.warn('[agent] model answer failed:', describeLlmError(err));
+    publish('answer', { id, error: describeLlmError(err) });
   }
 }
 
@@ -234,20 +292,7 @@ export async function analyzeCase(caseId) {
     for (const x of r.extraction.fault_codes || []) codeCount[x] = (codeCount[x] || 0) + 1;
   }
   const fixes = rankFixes(c.model, [c.component], [c.symptom], 5);
-  let text; let mode = 'rules';
-  if (llmEnabled()) {
-    try {
-      const evidence = reps.map((r) => `[R${r.id}] ${r.created_at.slice(0, 10)} ${r.asset_id} (${Math.round(r.smu_hours)} h, site climate: ${r.climate}) sev=${r.severity}: "${trunc(r.raw_text, 240)}" conditions=${(r.extraction.conditions || []).join('/') || '-'} codes=${(r.extraction.fault_codes || []).join('/') || '-'}`).join('\n');
-      const res = await createMessage({
-        model: MODEL, max_tokens: 6000, output_config: { effort: 'medium' },
-        system: 'You are a Caterpillar reliability engineer reviewing fleet field evidence. Be specific, evidence-based and concise (under 220 words). Use these headings: Pattern, Likely root cause, Field quick fix, Long-term product action, Confidence. Cite reports as [R<id>]. Do not invent part numbers.',
-        messages: [{ role: 'user', content: `Case #${c.id}: ${c.title}\nModel: ${c.model} · Component: ${c.component} · Symptom: ${c.symptom}\n\nField evidence:\n${evidence}\n\nKnown fixes and field results:\n${fixes.map((f) => `- ${f.title}: worked ${f.success}, failed ${f.fail}`).join('\n') || '- none'}` }],
-      });
-      if (res.stop_reason !== 'refusal') { text = textOf(res); mode = 'claude'; }
-    } catch (err) {
-      console.warn('[agent] case analysis via Claude failed:', describeLlmError(err));
-    }
-  }
+  let text;
   if (!text) {
     const topCond = Object.entries(condCount).sort((a, b) => b[1] - a[1]);
     const topCode = Object.entries(codeCount).sort((a, b) => b[1] - a[1]);
@@ -261,6 +306,24 @@ export async function analyzeCase(caseId) {
       `**Recommendation:** ${reps.length >= 3 && assets.length >= 2 ? 'Systemic — candidate for a product/design review and a fleet service bulletin.' : 'Monitor; gather more field evidence.'}`,
     ].filter(Boolean).join('\n');
   }
-  q.run('UPDATE eng_cases SET ai_analysis = ?, updated_at = ? WHERE id = ?', text, nowIso(), caseId);
-  return { analysis: text, mode, conditions: condCount, codes: codeCount };
+  q.run("UPDATE eng_cases SET ai_analysis = ?, ai_analysis_by = 'rules', updated_at = ? WHERE id = ?", text, nowIso(), caseId);
+  const pending = llmEnabled();
+  if (pending) analyzeCaseWithModel(c, reps, fixes).catch((err) => console.warn('[agent] case analysis failed:', err.message));
+  return { analysis: text, mode: 'rules', pending, model: pending ? llmInfo().label : null, conditions: condCount, codes: codeCount };
+}
+
+async function analyzeCaseWithModel(c, reps, fixes) {
+  try {
+    const evidence = reps.map((r) => `[R${r.id}] ${r.created_at.slice(0, 10)} ${r.asset_id} (${Math.round(r.smu_hours)} h, site climate: ${r.climate}) sev=${r.severity}: "${trunc(r.raw_text, 240)}" conditions=${(r.extraction.conditions || []).join('/') || '-'} codes=${(r.extraction.fault_codes || []).join('/') || '-'}`).join('\n');
+    const text = await complete({
+      system: 'You are a Caterpillar reliability engineer reviewing fleet field evidence. Be specific, evidence-based and concise (under 220 words). Write plain text with these bold headings on their own lines: **Pattern**, **Likely root cause**, **Field quick fix**, **Long-term product action**, **Confidence**. Use "- " for bullets. Cite reports as [R<id>]. Do not invent part numbers or procedures that are not supported by the evidence.',
+      prompt: `Case #${c.id}: ${c.title}\nModel: ${c.model} · Component: ${c.component} · Symptom: ${c.symptom}\n\nField evidence:\n${evidence}\n\nKnown fixes and field results:\n${fixes.map((f) => `- ${f.title}: worked ${f.success}, failed ${f.fail}`).join('\n') || '- none'}`,
+    });
+    if (!text) throw new Error('empty answer');
+    q.run('UPDATE eng_cases SET ai_analysis = ?, ai_analysis_by = ?, updated_at = ? WHERE id = ?', text, llmInfo().label, nowIso(), c.id);
+    publish('case', { case: q.get('SELECT * FROM eng_cases WHERE id = ?', c.id), analysis: 'llm' });
+  } catch (err) {
+    console.warn('[agent] case analysis via model failed:', describeLlmError(err));
+    publish('case', { case: q.get('SELECT * FROM eng_cases WHERE id = ?', c.id), analysis: 'failed', error: describeLlmError(err) });
+  }
 }

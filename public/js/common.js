@@ -31,6 +31,17 @@
     arrow: '<line x1="5" y1="12" x2="19" y2="12"/><polyline points="13 6 19 12 13 18"/>',
     refresh: '<polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>',
     wifiOff: '<line x1="1" y1="1" x2="23" y2="23"/><path d="M16.72 11.06A10.94 10.94 0 0 1 19 12.55M5 12.55a10.94 10.94 0 0 1 5.17-2.39M10.71 5.05A16 16 0 0 1 22.58 9M1.42 9a15.91 15.91 0 0 1 4.7-2.88M8.53 16.11a6 6 0 0 1 6.95 0"/><line x1="12" y1="20" x2="12.01" y2="20"/>',
+    chevron: '<polyline points="6 9 12 15 18 9"/>',
+    // Job-site issue types (the map's icons).
+    gear: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>',
+    bolt: '<polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>',
+    cloud: '<path d="M20 16.58A5 5 0 0 0 18 7h-1.26A8 8 0 1 0 4 15.25"/><line x1="8" y1="19" x2="8" y2="21"/><line x1="8" y1="13" x2="8" y2="15"/><line x1="16" y1="19" x2="16" y2="21"/><line x1="16" y1="13" x2="16" y2="15"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="12" y1="15" x2="12" y2="17"/>',
+    delivery: '<rect x="1" y="3" width="15" height="13"/><polygon points="16 8 20 8 23 11 23 16 16 16 16 8"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/>',
+    note: '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="12" y2="17"/>',
+    plus: '<line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>',
+    minus: '<line x1="5" y1="12" x2="19" y2="12"/>',
+    fit: '<path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/>',
+    filter: '<polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/>',
     inbox: '<polyline points="22 12 16 12 14 15 10 15 8 12 2 12"/><path d="M5.45 5.11L2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/>',
     // Equipment families, drawn side-on.
     excavator: '<rect x="2" y="17" width="12" height="4" rx="2"/><path d="M4 17v-4h7l1.5 4"/><path d="M6 13v-3h4v3"/><path d="M11 12l4-7 6 3-1.5 4"/><path d="M19.5 12l1.5 3.5h-3.5"/>',
@@ -39,6 +50,7 @@
     loader: '<circle cx="6.5" cy="18" r="2.5"/><circle cx="15.5" cy="18" r="2.5"/><path d="M3 16V9h5l1.5 3H16v4"/><path d="M5 9V5.5h3.5V9"/><path d="M16 12l3-2.5"/><path d="M19 9.5h3v5.5h-2.5z"/>',
     grader: '<path d="M2 14h4V8h5v6h11"/><circle cx="4.5" cy="18" r="2"/><circle cx="10" cy="18" r="2"/><circle cx="20" cy="18" r="2"/><path d="M13 14l-1.5 4h5"/>',
   };
+  const iconPaths = (name) => ICONS[name] || '';
   const icon = (name, cls = '') => `<svg class="icon ${cls}" viewBox="0 0 24 24" aria-hidden="true">${ICONS[name] || ''}</svg>`;
   const FAMILY_ICON = { 'Hydraulic Excavator': 'excavator', 'Off-Highway Truck': 'truck', 'Track-Type Dozer': 'dozer', 'Wheel Loader': 'loader', 'Motor Grader': 'grader' };
   const machineIcon = (family, cls = '') => icon(FAMILY_ICON[family] || 'excavator', cls);
@@ -76,6 +88,75 @@
   const ROLE = { operator: 'Operator', technician: 'Technician', site_manager: 'Site manager', safety_officer: 'Safety officer', fleet_manager: 'Fleet manager', cat_engineer: 'CAT engineer' };
   const SOURCE_ICON = { voice: 'mic', text: 'chat', telemetry: 'radio', repair: 'wrench', inspection: 'check' };
   const SOURCE_LABEL = { voice: 'Voice note', text: 'Typed report', telemetry: 'Sensor alarm', repair: 'Repair record', inspection: 'Inspection' };
+  // Types of job-site issue (computed per report by the server; one icon each, independent of urgency).
+  const ISSUES = {
+    hazard: { label: 'Safety hazard', icon: 'alert', hint: 'People at risk: unstable ground, pedestrians, fire, injury' },
+    malfunction: { label: 'Malfunction', icon: 'bolt', hint: 'Not working right: overheating, warnings, fault codes, power, controls' },
+    mechanical: { label: 'Wear & damage', icon: 'gear', hint: 'Leaks, cracks, noise, worn or broken parts' },
+    weather: { label: 'Weather & ground', icon: 'cloud', hint: 'Rain, heat, dust, mud, visibility' },
+    logistics: { label: 'Logistics', icon: 'delivery', hint: 'Fuel, parts, crew, schedule, deliveries' },
+    maintenance: { label: 'Repair & service', icon: 'wrench', hint: 'Repairs, services and inspections that were done' },
+    note: { label: 'Note or question', icon: 'note', hint: 'Routine logs and questions' },
+  };
+  // Where a report stands now (computed by the server from its alert, category and corrections).
+  const REPORT_STATUS = { open: 'Open issue', closed: 'Issue closed', withdrawn: 'Withdrawn', repair: 'Repair', logged: 'On record' };
+
+  // ---------- key facts up front, everything else one tap away ----------
+  const clip = (t, n) => { const x = String(t || '').replace(/\s+/g, ' ').trim(); return x.length > n ? x.slice(0, n - 1) + '…' : x; };
+
+  /**
+   * What's wrong, in a few words, from a report (its extraction) or an alert (its key fields):
+   * "Cooling system · Overheating", a hazard, "Repair · Hydraulic hose", or a short headline.
+   */
+  function problemOf(src = {}) {
+    const ex = src.extraction || {};
+    const part = src.part ?? ex.components?.[0] ?? null;
+    const problem = src.problem ?? ((ex.symptoms || []).find((x) => x !== 'Warning / fault code') || ex.symptoms?.[0] || null);
+    const hazard = src.hazard ?? ex.safety_hazards?.[0] ?? null;
+    const code = src.code ?? ex.fault_codes?.[0] ?? null;
+    let title;
+    if (src.category === 'maintenance') title = part ? `Repair · ${part}` : clip(src.summary, 64);
+    else if (part && problem) title = `${part} · ${problem}`;
+    else if (hazard) title = hazard;
+    else if (part) title = part;
+    else title = clip(src.headline || src.summary || src.title, 64);
+    return { title, part, problem, hazard, code };
+  }
+  const metaLine = (parts) => parts.filter(Boolean).join('<span class="sep"> · </span>');
+  /** Labelled key facts in a compact grid: [[label, html], …]; empty values are skipped. */
+  const keyFacts = (items) => `<dl class="keyfacts">${items.filter(([, v]) => v).map(([k, v]) => `<div><dt>${k}</dt><dd>${v}</dd></div>`).join('')}</dl>`;
+  /** Label/value rows for the inside of a dropdown. */
+  const kv = (rows) => `<dl class="kv">${rows.filter(([, v]) => v).map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('')}</dl>`;
+  /** One row: the key facts as its summary, everything else inside. */
+  const keyRow = ({ tone = '', title, meta = '', right = '', body = '', open = false, attrs = '' }) =>
+    `<details class="kr ${tone}" ${open ? 'open' : ''} ${attrs}><summary><span class="kr-main"><span class="kr-title">${title}</span>${meta ? `<span class="kr-meta">${meta}</span>` : ''}</span>${right ? `<span class="kr-right">${right}</span>` : ''}${icon('chevron', 'chev')}</summary><div class="kr-body">${body}</div></details>`;
+  /** A collapsible section: a label (and count) you tap to see the rest. */
+  const dropdown = (label, inner, { open = false, count = null, attrs = '' } = {}) =>
+    `<details class="dd" ${open ? 'open' : ''} ${attrs}><summary><span>${label}${count != null ? `<span class="n">${count}</span>` : ''}</span>${icon('chevron', 'chev')}</summary><div class="dd-body">${inner}</div></details>`;
+  /** An alert body is guidance + "What worked before…" + "Sent to CAT Engineering…" + appended updates; split it for labelled rows. */
+  function splitAlertBody(body) {
+    const [first, ...updates] = String(body || '').split('\n');
+    let todo = first;
+    const take = (re) => { const m = todo.match(re); if (!m) return null; todo = todo.replace(m[0], ' ').replace(/\s+/g, ' ').trim(); return m[1].trim(); };
+    const engineering = take(/((?:Sent to|Escalated to) CAT Engineering[^]*?)(?=What worked before:|$)/);
+    const before = take(/What worked before:\s*([^]*?\))\.?/);
+    return { todo: todo.trim(), before, engineering, updates: updates.map((u) => u.trim()).filter(Boolean) };
+  }
+  /** The inside of an alert's dropdown: what to do, what worked before, the escalation, updates. */
+  function alertDetails(a, extra = []) {
+    const b = splitAlertBody(a.body);
+    return kv([
+      ['What to do', esc(b.todo)],
+      ['Worked before', esc(b.before || '')],
+      ['CAT Engineering', esc(b.engineering || '')],
+      ['Updates', b.updates.map(esc).join('<br>')],
+      ['Fault code', esc(a.code || '')],
+      ['Fixed', esc(a.resolution || '')],
+      ...extra,
+    ]);
+  }
+  const alertTitle = (a) => (a.kind === 'bulletin' ? clip(a.headline || a.title, 72) : problemOf(a).title);
+  const toneOf = (r) => (r.status === 'withdrawn' ? 'withdrawn' : r.category === 'maintenance' ? 'repair' : r.kind === 'bulletin' || r.kind === 'agent' ? 'bulletin' : r.severity || '');
 
   /** Unglamorous states. */
   const emptyState = ({ icon: ic = 'inbox', title, body = '', action = '', error = false }) =>
@@ -86,7 +167,7 @@
   function md(text) {
     const lines = esc(text || '').split(/\n/);
     let html = ''; let inList = false;
-    const inline = (s) => s.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>').replace(/\[R(\d+)\]/g, '<span class="ref">R$1</span>').replace(/^#{1,4}\s*(.+)$/, '<strong>$1</strong>');
+    const inline = (s) => s.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>').replace(/\[R(\d+)\]/g, '<span class="ref">R$1</span>').replace(/\[D(\d+)\]/g, '<a class="ref" href="/library?doc=$1">D$1</a>').replace(/^#{1,4}\s*(.+)$/, '<strong>$1</strong>');
     for (const raw of lines) {
       const line = raw.trim();
       const bullet = line.match(/^[-*•]\s+(.*)$/);
@@ -142,13 +223,33 @@
   };
 
   function topbar(active, extra = '') {
-    const links = [['/', 'Overview'], ['/operator', 'Operator'], ['/site', 'Job sites'], ['/engineering', 'CAT Engineering'], ['/graph', 'Graph'], ['/tags', 'Tags']];
+    // Four tabs. Engineering, the library, QR tags and machine pages hang off the Dashboard.
+    const links = [['/', 'Dashboard'], ['/reports', 'Reports'], ['/graph', 'Graph'], ['/operator', 'Operator']];
+    const tab = links.some(([h]) => h === active) ? active : '/';
     return `<header class="topbar">
-      <a class="brand" href="/">CAT TRACK</a>
-      <nav class="nav">${links.map(([h, l]) => `<a href="${h}" class="${active === h ? 'active' : ''}">${l}</a>`).join('')}</nav>
+      <a class="brand" href="/" aria-label="Cat Track dashboard">CAT<span class="b2">&nbsp;TRACK</span></a>
+      <nav class="nav">${links.map(([h, l]) => `<a href="${h}" class="${tab === h ? 'active' : ''}" ${tab === h ? 'aria-current="page"' : ''}>${l}</a>`).join('')}</nav>
       <div class="grow"></div>${extra}
       <span class="live" id="live"><span class="dot"></span><span class="txt">Connecting</span></span>
     </header>`;
+  }
+
+  /** A bar along the bottom with a single Undo; it goes away on its own after a few seconds. */
+  function undoBar(message, onUndo, { seconds = 10 } = {}) {
+    document.querySelector('.undo-bar')?.remove();
+    const bar = document.createElement('div');
+    bar.className = 'undo-bar';
+    bar.setAttribute('role', 'status');
+    bar.innerHTML = `<span class="m">${message}</span><button class="btn sm" type="button">Undo</button>`;
+    document.body.appendChild(bar);
+    const close = () => { clearTimeout(timer); bar.remove(); };
+    const timer = setTimeout(close, seconds * 1000);
+    const btn = bar.querySelector('button');
+    btn.onclick = async () => {
+      btn.disabled = true;
+      try { await onUndo(); close(); } catch (err) { toast(esc(err.message), 'high'); btn.disabled = false; }
+    };
+    return close;
   }
 
   function modal(html) {
@@ -161,5 +262,5 @@
     return { el: back.querySelector('.modal'), close: () => back.remove() };
   }
 
-  window.CT = { api, esc, ago, dateShort, dateTime, sevPill, statusPill, healthBar, md, toast, connectStream, store, topbar, modal, icon, machineIcon, emptyState, skeleton, ROLE, SOURCE_ICON, SOURCE_LABEL, STATUS_LABEL };
+  window.CT = { api, esc, ago, dateShort, dateTime, sevPill, statusPill, healthBar, md, toast, undoBar, connectStream, store, topbar, modal, icon, machineIcon, emptyState, skeleton, ROLE, SOURCE_ICON, SOURCE_LABEL, STATUS_LABEL, REPORT_STATUS, ISSUES, clip, problemOf, metaLine, keyFacts, kv, keyRow, dropdown, toneOf, splitAlertBody, alertDetails, alertTitle, iconPaths, FAMILY_ICON };
 })();

@@ -3,188 +3,95 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Cat Track</title>
+  <title>Dashboard · Cat Track</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700&family=Barlow+Condensed:wght@600;700;800&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/css/app.css">
   <style>
-    .opening { display: grid; grid-template-columns: minmax(0, 7fr) minmax(0, 5fr); gap: 56px; padding: 44px 0 52px; border-bottom: 1px solid var(--line); align-items: start; }
-    .headline { font-family: var(--f-display); font-weight: 800; font-size: clamp(50px, 6.6vw, 96px); line-height: .9; letter-spacing: -0.012em; max-width: 13.5ch; margin: 14px 0 0; }
-    .lede { font-size: 19px; line-height: 1.5; color: var(--ink-2); max-width: 54ch; margin-top: 22px; }
-    .cta { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 28px; }
-    .fleetline { margin-top: 30px; padding-top: 16px; border-top: 1px solid var(--line); font-size: 15px; color: var(--muted); max-width: 60ch; }
-    .fleetline b { color: var(--ink); font-weight: 600; }
-    /* case file */
-    .casefile { border: 1px solid var(--line-strong); border-top: 6px solid var(--cat); border-radius: 0 0 var(--r) var(--r); background: var(--s1); }
-    .casefile .hd { padding: 16px 18px 14px; border-bottom: 1px solid var(--line); }
-    .casefile .hd h2 { font-family: var(--f-display); font-weight: 700; font-size: 30px; line-height: 1.02; margin-top: 8px; }
-    .casefile .meta { font-family: var(--f-mono); font-size: 12px; color: var(--muted); margin-top: 8px; }
-    .ledger { list-style: none; margin: 0; padding: 4px 18px; }
-    .ledger li { display: grid; grid-template-columns: 74px 1fr; gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--line); }
-    .ledger li:last-child { border-bottom: 0; }
-    .ledger .when { font-family: var(--f-mono); font-size: 12px; color: var(--muted); line-height: 1.5; }
-    .ledger .when b { display: block; color: var(--ink); font-weight: 500; font-size: 13px; }
-    .ledger q { display: block; font-size: 15px; quotes: '“' '”'; }
-    .ledger .src { font-size: 12px; color: var(--faint); margin-top: 3px; }
-    .casefile .ft { padding: 14px 18px 16px; border-top: 1px solid var(--line); background: var(--s2); border-radius: 0 0 var(--r) var(--r); }
-    .casefile .ft .fx { font-weight: 600; }
-    /* trace */
-    section.block { display: grid; grid-template-columns: minmax(0, 4fr) minmax(0, 8fr); gap: 56px; padding: 48px 0; border-bottom: 1px solid var(--line); }
-    section.block > header h2 { font-family: var(--f-display); font-weight: 700; font-size: 38px; line-height: 1; }
-    section.block > header p { color: var(--muted); margin-top: 14px; max-width: 38ch; }
-    .steps { list-style: none; margin: 0; padding: 0; counter-reset: s; }
-    .steps > li { display: grid; grid-template-columns: 56px 1fr; gap: 16px; padding: 18px 0; border-top: 1px solid var(--line); }
-    .steps > li:first-child { border-top: 0; padding-top: 0; }
-    .steps .n { font-family: var(--f-mono); font-size: 13px; color: var(--cat); padding-top: 3px; }
-    .steps .n span { display: block; color: var(--muted); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; margin-top: 2px; }
-    .steps blockquote { margin: 0; font-family: var(--f-display); font-weight: 600; font-size: 30px; line-height: 1.12; max-width: 30ch; }
-    .steps .by { font-size: 14px; color: var(--muted); margin-top: 8px; }
-    .people { display: flex; flex-wrap: wrap; gap: 6px 16px; margin-top: 6px; font-size: 14px; }
-    .people span b { font-weight: 600; }
-    .people span em { font-style: normal; color: var(--muted); }
-    .sim { font-size: 14px; margin-top: 6px; color: var(--ink-2); }
-    .sim .id { color: var(--ink); }
-    /* who uses what */
-    .where { display: grid; grid-template-columns: minmax(0, 1fr) 260px; gap: 40px; align-items: start; }
-    table.screens { width: 100%; border-collapse: collapse; }
-    table.screens td { padding: 16px 12px 16px 0; border-top: 1px solid var(--line); vertical-align: top; }
-    table.screens tr:first-child td { border-top: 0; padding-top: 0; }
-    table.screens .who { width: 150px; font-weight: 600; }
-    table.screens .path { width: 170px; font-family: var(--f-mono); font-size: 13px; }
-    table.screens .what { color: var(--ink-2); }
-    .qr-side { position: sticky; top: 72px; }
-    .qr-side img { width: 100%; aspect-ratio: 1; background: #fff; padding: 10px; border-radius: 4px; display: block; }
-    .qr-side .u { font-family: var(--f-mono); font-size: 12px; word-break: break-all; margin-top: 10px; }
-    .qr-side .h { font-size: 13px; color: var(--muted); margin-top: 6px; }
-    @media (max-width: 960px) {
-      .opening, section.block, .where { grid-template-columns: 1fr; gap: 28px; }
-      .opening { padding-top: 26px; }
-      .qr-side { position: static; max-width: 260px; }
-      table.screens .who, table.screens .path { width: auto; }
-      table.screens td { display: block; padding: 2px 0; border: 0; }
-      table.screens tr { display: block; padding: 14px 0; border-top: 1px solid var(--line); }
-    }
+    .head { display: flex; justify-content: space-between; align-items: flex-end; gap: 16px; flex-wrap: wrap; margin-bottom: 14px; }
+    .head h1 { margin-top: 4px; }
+    .head .sub { color: var(--muted); font-size: 14px; margin-top: 4px; }
+    .sites { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+    .sites button { padding: 7px 12px; border: 1px solid var(--line-strong); border-radius: 4px; background: var(--s1); color: var(--muted); font-weight: 600; font-size: 14px; cursor: pointer; white-space: nowrap; }
+    .sites button:hover { color: var(--ink); }
+    .sites button.on { color: var(--ink); border-color: var(--cat); box-shadow: inset 0 -2px 0 var(--cat); background: var(--s2); }
+    .board { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr) minmax(0, .95fr); gap: 18px; align-items: start; }
+    @media (max-width: 1180px) { .board { grid-template-columns: 1fr 1fr; } .board > :last-child { grid-column: 1 / -1; display: grid; grid-template-columns: 1fr 1fr; gap: 18px; } }
+    @media (max-width: 760px) { .board, .board > :last-child { grid-template-columns: 1fr; } }
+    .col { display: flex; flex-direction: column; gap: 18px; min-width: 0; }
+    .panel-head a { font-size: 13px; }
+    .unit { display: grid; grid-template-columns: 34px minmax(0, 1fr) auto; gap: 12px; align-items: center; padding: 10px 0; border-top: 1px solid var(--line); color: var(--ink); text-decoration: none; }
+    .unit:first-child { border-top: 0; }
+    .unit:hover .id { text-decoration: underline; text-decoration-color: var(--cat); }
+    .unit .ic { width: 34px; height: 34px; display: grid; place-items: center; border: 1.5px solid var(--line-strong); border-radius: 50%; color: var(--ink-2); }
+    .unit .ic svg { width: 20px; height: 20px; }
+    .unit.down .ic { border-color: var(--critical); } .unit.attention .ic { border-color: var(--serious); } .unit.operational .ic { border-color: var(--good); }
+    .unit .m { font-size: 13px; color: var(--muted); }
+    .unit .tele { font-family: var(--f-mono); font-size: 11px; color: var(--muted); }
+    .unit .r { text-align: right; min-width: 96px; }
+    .unit .r .health { margin-top: 6px; }
+    .act-item { display: grid; grid-template-columns: 20px 1fr; gap: 10px; align-items: start; padding: 8px 0; border-top: 1px solid var(--line); cursor: pointer; font-size: 14px; }
+    .act-item:first-child { border-top: 0; }
+    .act-item .box { width: 18px; height: 18px; border-radius: 3px; border: 1.5px solid var(--line-strong); display: grid; place-items: center; margin-top: 1px; }
+    .act-item .box svg { width: 12px; height: 12px; stroke-width: 3; }
+    .act-item:hover .box { border-color: var(--cat); }
+    .act-item.done { opacity: .5; } .act-item.done .txt { text-decoration: line-through; }
+    .act-item.done .box { background: var(--good); border-color: var(--good); color: #06150c; }
+    .act-item .meta { font-size: 12px; color: var(--faint); margin-top: 2px; font-family: var(--f-mono); }
+    .case-row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 9px 0; border-top: 1px solid var(--line); color: var(--ink); text-decoration: none; font-size: 14px; }
+    .case-row:first-child { border-top: 0; }
+    .case-row:hover .t { text-decoration: underline; text-decoration-color: var(--cat); }
+    .case-row .t { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .case-row .n { font-family: var(--f-mono); font-size: 11px; color: var(--muted); white-space: nowrap; }
+    .links { display: flex; flex-direction: column; }
+    .links a { display: flex; align-items: center; gap: 10px; padding: 10px 0; border-top: 1px solid var(--line); color: var(--ink); text-decoration: none; font-weight: 600; font-size: 14px; }
+    .links a:first-child { border-top: 0; }
+    .links a .icon { color: var(--muted); }
+    .links a span.m { margin-left: auto; font-family: var(--f-mono); font-size: 11px; font-weight: 400; color: var(--muted); }
+    .links a:hover { color: var(--cat); }
+    .ask-log { max-height: 280px; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; margin-bottom: 12px; }
+    .bubble { font-size: 14px; max-width: 94%; }
+    .bubble.me { align-self: flex-end; background: var(--s3); border-radius: 4px; padding: 7px 11px; font-weight: 500; }
+    .bubble.bot { align-self: flex-start; border-left: 2px solid var(--cat); padding: 2px 0 2px 12px; }
+    .trace { margin-top: 6px; font-family: var(--f-mono); font-size: 11px; color: var(--faint); }
   </style>
 </head>
 <body>
   <div id="top"></div>
-  <main class="page">
-    <section class="opening">
-      <div>
-        <div class="label">Field record for Caterpillar fleets</div>
-        <h1 class="headline">Somewhere in your fleet, someone already fixed this.</h1>
-        <p class="lede">Cat Track files every voice note, sensor alarm and repair against the machine it happened to. When the same fault turns up on another unit, the crew on that site gets the fix that worked, and Caterpillar engineers see the pattern across job sites while it is still a handful of reports.</p>
-        <div class="cta"><a class="btn primary lg" href="/operator">Report on a machine</a><a class="btn lg" href="/site">Open the job-site view</a></div>
-        <p class="fleetline" id="fleetline"><span class="sk line" style="width:80%"></span><span class="sk line" style="width:52%"></span></p>
+  <div class="page">
+    <div class="head">
+      <div><div class="label" id="siteLabel">Dashboard</div><h1 id="siteTitle"><span class="sk title" style="width:360px;height:36px"></span></h1><div class="sub" id="siteSub"></div></div>
+      <div class="row wrap" style="gap:14px">
+        <div class="sites" id="sites" role="group" aria-label="Job site"></div>
+        <label class="switch" title="Stream simulated sensor readings from every machine"><input type="checkbox" id="teleToggle"><span class="track"></span>Sensors</label>
       </div>
-      <aside class="casefile" id="casefile" aria-live="polite">
-        <div class="hd"><span class="sk line" style="width:40%"></span><span class="sk title" style="margin-top:12px"></span></div>
-        <div style="padding:16px 18px"><span class="sk block"></span><span class="sk block"></span></div>
-      </aside>
-    </section>
-
-    <section class="block">
-      <header>
-        <h2>What happens after someone taps Send</h2>
-        <p>This is the most recent mechanical report in the record, followed through the system, as stored.</p>
-      </header>
-      <ol class="steps" id="trace"><li><span class="n">01</span><div><span class="sk title"></span><span class="sk line"></span></div></li></ol>
-    </section>
-
-    <section class="block">
-      <header>
-        <h2>Who uses which screen</h2>
-        <p>Same record, different questions. Each screen shows the part of it that person can act on.</p>
-      </header>
-      <div class="where">
-        <table class="screens"><tbody>
-          <tr><td class="who">Operator in the cab</td><td class="path"><a href="/operator">/operator</a></td><td class="what">Scan the tag on the machine, tap the button, say what's wrong. Hear back what to do right now, and who's been told.</td></tr>
-          <tr><td class="who">Site manager</td><td class="path"><a href="/site">/site</a></td><td class="what">Open alerts for one job site, tasks split by crew role, which machines are down, and the running field log.</td></tr>
-          <tr><td class="who">Technician</td><td class="path"><a href="/asset?id=EX-0412">/asset?id=…</a></td><td class="what">One machine's full history: fault codes, past repairs, and which fixes worked on its model, ranked by field results.</td></tr>
-          <tr><td class="who">CAT engineer</td><td class="path"><a href="/engineering">/engineering</a></td><td class="what">Failures grouped by model and part across every site. Send a quick fix to the field, or log a design change.</td></tr>
-          <tr><td class="who">Anyone curious</td><td class="path"><a href="/graph">/graph</a></td><td class="what">How machines, parts, symptoms, conditions and fixes connect, updating as reports come in.</td></tr>
-          <tr><td class="who">Whoever sets up</td><td class="path"><a href="/tags">/tags</a></td><td class="what">Printable QR tags, one per machine. Tape one inside each cab door.</td></tr>
-        </tbody></table>
-        <div class="qr-side">
-          <div class="label" style="margin-bottom:10px">Try it on your phone</div>
-          <img id="qr" alt="QR code that opens the operator screen">
-          <div class="u" id="pubUrl"><span class="sk line"></span></div>
-          <div class="h" id="pubHint"></div>
+    </div>
+    <div class="statline" id="stats"><span class="sk" style="width:180px;height:56px"></span><span class="sk line" style="width:420px"></span></div>
+    <div class="board">
+      <div class="col">
+        <div class="panel"><div class="panel-head"><h3>Open alerts</h3><span class="count" id="alertCount"></span></div><div class="panel-body" id="alerts"></div></div>
+        <div class="panel"><div class="panel-head"><h3>Latest reports</h3><a href="/reports" id="logLink">Report log</a></div><div class="panel-body" id="latest"></div></div>
+      </div>
+      <div class="col">
+        <div class="panel"><div class="panel-head"><h3>Machines</h3><span class="count" id="fleetCount"></span></div><div class="panel-body" id="fleet"></div></div>
+        <div class="panel"><div class="panel-head"><h3>Tasks</h3><span class="count" id="actCount"></span></div><div class="panel-body" id="actions"></div></div>
+      </div>
+      <div class="col">
+        <div class="panel"><div class="panel-head"><h3>CAT Engineering</h3><a href="/engineering">All cases</a></div><div class="panel-body" id="cases"></div></div>
+        <div class="panel">
+          <div class="panel-head"><h3>Ask the record</h3><span class="count" id="aiMode"></span></div>
+          <div class="panel-body">
+            <div class="ask-log" id="askLog"><div class="bubble bot muted">Ask about a machine, a part or a pattern. It can also assign a task or warn a crew.</div></div>
+            <form class="row" id="askForm"><input class="input" id="askInput" placeholder="Which trucks have run hot this month?" autocomplete="off"><button class="btn primary">Ask</button></form>
+            <div class="chips" style="margin-top:10px" id="askChips"></div>
+          </div>
         </div>
+        <div class="panel"><div class="panel-head"><h3>More</h3></div><div class="panel-body links" id="links"></div></div>
       </div>
-    </section>
-    <div class="footer-note">Cat Track · hackathon prototype · every machine, person and record here is demo data · <span id="aiNote"></span></div>
-  </main>
+    </div>
+  </div>
   <script src="/js/common.js"></script>
-  <script>
-    (async function () {
-      const { api, esc, ago, dateShort, sevPill, icon, topbar, connectStream, emptyState, ROLE, SOURCE_LABEL } = CT;
-      const $ = (id) => document.getElementById(id);
-      $('top').innerHTML = topbar('/');
-      connectStream({}, $('live'));
-
-      // Fleet sentence (live numbers, not tiles)
-      api('/api/dashboard').then((d) => {
-        const sites = new Set(d.assets.map((a) => a.site_id)).size;
-        const attention = d.kpis.down + d.kpis.attention;
-        return api('/api/cases').then((cases) => {
-          const open = cases.filter((c) => c.status !== 'closed').length;
-          $('fleetline').innerHTML = `Right now: <b>${d.kpis.assets} machines</b> on <b>${sites} job sites</b>. <b>${attention}</b> ${attention === 1 ? 'needs' : 'need'} attention, <b>${d.kpis.openAlerts}</b> ${d.kpis.openAlerts === 1 ? 'alert is' : 'alerts are'} open, and <b>${open}</b> ${open === 1 ? 'issue is' : 'issues are'} with CAT Engineering. The record holds ${d.graph.nodes} linked facts.`;
-        });
-      }).catch(() => { $('fleetline').textContent = 'Fleet numbers are unavailable — the server may be restarting.'; });
-
-      // Case file: the strongest fleet pattern, quoted from the field
-      (async () => {
-        try {
-          const cases = await api('/api/cases');
-          const top = cases.find((c) => c.status !== 'closed');
-          if (!top) { $('casefile').innerHTML = `<div class="hd">${emptyState({ icon: 'file', title: 'No open engineering cases', body: 'When two machines of the same model report the same part failing, a case opens here automatically.' })}</div>`; return; }
-          const d = await api(`/api/cases/${top.id}`);
-          const fix = d.fixes[0];
-          $('casefile').innerHTML = `
-            <div class="hd"><div class="row spread"><span class="label">From the record · case #${top.id}</span><span class="sev sev-${top.priority === 'P1' ? 'critical' : top.priority === 'P2' ? 'high' : 'medium'}"><i></i>${esc(top.priority)} priority</span></div>
-              <h2>${esc(top.title)}</h2>
-              <div class="meta">${top.occurrences} reports · ${top.machines} machine${top.machines === 1 ? '' : 's'} · ${top.sites} site${top.sites === 1 ? '' : 's'} · first ${dateShort(top.first_seen)}</div></div>
-            <ol class="ledger">${d.reports.slice(0, 4).map((r) => `<li><div class="when"><b class="id">${esc(r.asset_id)}</b>${dateShort(r.created_at)}</div><div><q>${esc(r.raw_text)}</q><div class="src">${esc(r.person_name || SOURCE_LABEL[r.source] || r.source)}${r.person_role ? ', ' + esc(ROLE[r.person_role].toLowerCase()) : ''} · ${esc(r.site_name)}</div></div></li>`).join('')}</ol>
-            <div class="ft">${fix ? `<div class="label">Best fix so far</div><div class="fx" style="margin-top:4px">${esc(fix.title)}</div><div class="muted" style="font-size:13px;margin-top:2px">Worked ${fix.success} of ${fix.success + fix.fail} times it was tried.</div>` : '<div class="muted">No fix on record yet.</div>'}
-              <a href="/engineering?case=${top.id}" style="display:inline-block;margin-top:10px;font-size:14px">Open the case in CAT Engineering</a></div>`;
-        } catch (err) {
-          $('casefile').innerHTML = `<div class="hd">${emptyState({ icon: 'wifiOff', title: 'Couldn’t load the case file', body: esc(err.message), error: true })}</div>`;
-        }
-      })();
-
-      // Trace one real report through the pipeline
-      (async () => {
-        try {
-          const reports = await api('/api/reports?limit=60');
-          const r0 = reports.find((r) => r.category === 'mechanical' && r.source !== 'telemetry') || reports[0];
-          if (!r0) { $('trace').innerHTML = `<li><span class="n">—</span>${emptyState({ icon: 'mic', title: 'Nothing has been reported yet', body: 'Send the first report from <a href="/operator">the operator screen</a> and it will be traced here.' })}</li>`; return; }
-          const t = await api(`/api/reports/${r0.id}/trace`);
-          const r = t.report; const ex = r.extraction;
-          const chips = [...ex.components.map((x) => ['part', x]), ...ex.symptoms.filter((s) => s !== 'Warning / fault code').map((x) => ['symptom', x]), ...ex.fault_codes.map((x) => ['code', x]), ...ex.conditions.map((x) => ['condition', x])];
-          const byRole = {};
-          for (const p of t.recipients) (byRole[p.role] ||= []).push(p.name);
-          $('trace').innerHTML = `
-            <li><span class="n">01<span>Heard</span></span><div><blockquote>“${esc(r.raw_text)}”</blockquote><div class="by">${esc(r.person_name || SOURCE_LABEL[r.source])}, on <span class="id">${esc(r.asset_id)}</span> (${esc(r.model)} ${esc(r.family.toLowerCase())}) at ${esc(r.site_name)} · ${ago(r.created_at)}</div></div></li>
-            <li><span class="n">02<span>Understood</span></span><div><div class="row wrap" style="gap:8px">${sevPill(r.severity)}<strong>${esc(r.summary)}</strong></div><div class="chips" style="margin-top:10px">${chips.map(([k, v]) => `<span class="chip"><span class="k">${k}</span>${esc(v)}</span>`).join('')}</div></div></li>
-            <li><span class="n">03<span>Recalled</span></span><div>${t.similar.length ? `<div>Matched ${t.similar.length} earlier event${t.similar.length === 1 ? '' : 's'} in the record:</div>${t.similar.slice(0, 3).map((s) => `<div class="sim"><span class="id">${esc(s.asset_id)}</span> · ${dateShort(s.created_at)} · ${esc(s.summary)} <span class="faint">(${esc((s.reasons || []).slice(0, 3).join(', '))})</span></div>`).join('')}` : '<div class="muted">First time the record has seen this. It is now on file for the next one.</div>'}</div></li>
-            <li><span class="n">04<span>Routed</span></span><div>${t.alert ? `<div>Alert sent to ${t.recipients.length} ${t.recipients.length === 1 ? 'person' : 'people'} at ${esc(r.site_name)}:</div><div class="people">${Object.entries(byRole).map(([role, names]) => `<span><em>${esc(ROLE[role])}</em> <b>${names.map(esc).join(', ')}</b></span>`).join('')}</div>${t.actions.length ? `<div class="muted" style="font-size:14px;margin-top:8px">${t.actions.length} tasks created, first: “${esc(t.actions[0].text)}”</div>` : ''}` : '<div class="muted">Low severity — saved to the machine’s record without paging anyone.</div>'}</div></li>
-            <li><span class="n">05<span>Escalated</span></span><div>${t.case ? `<div>Filed under CAT Engineering case <a href="/engineering?case=${t.case.id}">#${t.case.id} ${esc(t.case.title)}</a>, now ${t.case.occurrences} reports, priority ${esc(t.case.priority)}.</div>` : '<div class="muted">Not a product issue (routine wear, site hazard or a completed repair), so engineering wasn’t paged.</div>'}</div></li>`;
-        } catch (err) {
-          $('trace').innerHTML = `<li><span class="n">—</span>${emptyState({ icon: 'wifiOff', title: 'Couldn’t load the example report', body: esc(err.message), error: true })}</li>`;
-        }
-      })();
-
-      try {
-        const [h, pub] = await Promise.all([api('/api/health'), api('/api/public-url')]);
-        const url = `${pub.url}/operator`;
-        $('qr').src = `/api/qr.svg?data=${encodeURIComponent(url)}`;
-        $('pubUrl').innerHTML = `<a href="${esc(url)}">${esc(url.replace(/^https?:\/\//, ''))}</a>`;
-        $('pubHint').textContent = pub.kind === 'ngrok' ? 'Public HTTPS link, so the phone’s microphone and camera work.' : 'Local network link. Phones need HTTPS for the mic and camera — run npm run demo for a tunnel.';
-        $('aiNote').textContent = h.ai === 'claude' ? `reports read by ${h.model}` : 'reports read by the offline rule engine';
-      } catch (err) { $('pubUrl').textContent = 'Link unavailable'; }
-    })();
-  </script>
+  <script src="/js/dashboard.js"></script>
 </body>
 </html>

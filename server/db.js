@@ -9,7 +9,7 @@ export const DATA_DIR = path.join(here, '..', 'data');
 export const UPLOAD_DIR = path.join(DATA_DIR, 'uploads');
 fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 
-const DB_PATH = path.join(DATA_DIR, 'cattrack.db');
+const DB_PATH = process.env.CAT_TRACK_DB || path.join(DATA_DIR, 'cattrack.db');
 
 export function resetDatabaseFile() {
   for (const suffix of ['', '-wal', '-shm']) {
@@ -81,10 +81,40 @@ CREATE TABLE IF NOT EXISTS memory_facts (
   source_report_id INTEGER, fact_key TEXT, created_at TEXT NOT NULL, updated_at TEXT,
   UNIQUE(asset_id, fact_key)
 );
+CREATE TABLE IF NOT EXISTS documents (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT, doc_type TEXT, product TEXT, filename TEXT, size INTEGER,
+  file_path TEXT, pages INTEGER, text_chars INTEGER, summary TEXT, status TEXT, stage TEXT, steps TEXT, error TEXT,
+  extraction TEXT, graph_summary TEXT, ai_mode TEXT, uploaded_by TEXT, created_at TEXT NOT NULL, integrated_at TEXT
+);
+CREATE TABLE IF NOT EXISTS doc_chunks (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, doc_id INTEGER NOT NULL, idx INTEGER NOT NULL, text TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_doc_chunks_doc ON doc_chunks(doc_id);
+CREATE TABLE IF NOT EXISTS doc_models (
+  doc_id INTEGER NOT NULL, model TEXT NOT NULL, PRIMARY KEY (doc_id, model)
+);
+CREATE TABLE IF NOT EXISTS report_trash (
+  id INTEGER PRIMARY KEY, asset_id TEXT, site_id TEXT, person_id TEXT, summary TEXT, created_at TEXT,
+  row TEXT NOT NULL, undo TEXT, deleted_at TEXT NOT NULL, deleted_by TEXT, reason TEXT, via TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_report_trash_asset ON report_trash(asset_id, deleted_at);
+CREATE TABLE IF NOT EXISTS report_notes (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, report_id INTEGER NOT NULL, person_id TEXT, text TEXT NOT NULL, created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_report_notes_report ON report_notes(report_id, created_at);
 CREATE TABLE IF NOT EXISTS telemetry (
   id INTEGER PRIMARY KEY AUTOINCREMENT, asset_id TEXT, metric TEXT, value REAL, unit TEXT, created_at TEXT NOT NULL
 );
 `);
+
+// Additive migrations for databases created by earlier versions.
+for (const sql of [
+  'ALTER TABLE eng_cases ADD COLUMN ai_analysis_by TEXT',
+  'ALTER TABLE alerts ADD COLUMN resolved_by_report INTEGER', // the repair report that closed it
+  'ALTER TABLE fixes ADD COLUMN report_id INTEGER', // the report a field fix was learned from
+]) {
+  try { db.exec(sql); } catch { /* column already exists */ }
+}
 
 export const nowIso = () => new Date().toISOString();
 
@@ -120,5 +150,25 @@ export function parseJson(text, fallback = null) {
   try { return JSON.parse(text); } catch { return fallback; }
 }
 
-/** Alerts store their audience as JSON text; always hand callers a real array. */
-export const alertRow = (a) => (a ? { ...a, audience: parseJson(a.audience, []) } : a);
+/**
+ * Alerts store their audience as JSON text; always hand callers a real array. Each alert also
+ * carries the key facts screens show without opening it: the part, the problem, the machine's
+ * model, the site, and a headline without the machine prefix.
+ */
+export function alertRow(a) {
+  if (!a) return a;
+  const ex = a.report_id ? parseJson(q.get('SELECT extraction FROM reports WHERE id = ?', a.report_id)?.extraction, {}) : {};
+  const asset = a.asset_id ? q.get('SELECT model FROM assets WHERE id = ?', a.asset_id) : null;
+  const prefix = a.asset_id ? `${a.asset_id} · ` : '';
+  return {
+    ...a,
+    audience: parseJson(a.audience, []),
+    site_name: a.site_name || q.get('SELECT name FROM sites WHERE id = ?', a.site_id)?.name || null,
+    model: asset?.model || null,
+    part: ex.components?.[0] || null,
+    problem: (ex.symptoms || []).find((s) => s !== 'Warning / fault code') || ex.symptoms?.[0] || null,
+    hazard: ex.safety_hazards?.[0] || null,
+    code: ex.fault_codes?.[0] || null,
+    headline: prefix && String(a.title || '').startsWith(prefix) ? a.title.slice(prefix.length) : a.title,
+  };
+}

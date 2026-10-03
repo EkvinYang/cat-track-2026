@@ -26,25 +26,9 @@
     .tabs { display: flex; border-bottom: 1px solid var(--line); }
     .tabs button { border: 0; background: transparent; padding: 8px 0; margin-right: 18px; font-weight: 600; font-size: 14px; color: var(--muted); cursor: pointer; border-bottom: 3px solid transparent; margin-bottom: -1px; }
     .tabs button.on { color: var(--ink); border-bottom-color: var(--cat); }
-    .ins { padding: 11px 0 11px 14px; border-bottom: 1px solid var(--line); position: relative; }
-    .ins::before { content: ''; position: absolute; left: 0; top: 14px; width: 6px; height: 6px; border-radius: 1px; background: var(--faint); }
-    .ins.high::before { background: var(--critical); }
-    .ins.medium::before { background: var(--serious); }
-    .ins .tt { font-weight: 600; font-size: 14px; }
-    .ins .dd { color: var(--ink-2); font-size: 13px; margin-top: 3px; }
     .mem { display: grid; grid-template-columns: 20px 1fr; gap: 9px; font-size: 14px; padding: 9px 0; border-bottom: 1px solid var(--line); }
     .mem:last-child { border-bottom: none; }
     .mem .icon { color: var(--muted); margin-top: 3px; }
-    .tl { position: relative; padding-left: 24px; }
-    .tl::before { content: ''; position: absolute; left: 6px; top: 6px; bottom: 6px; width: 1px; background: var(--line-strong); }
-    .tl-item { position: relative; padding: 0 0 18px; }
-    .tl-item .dot { position: absolute; left: -23px; top: 5px; width: 11px; height: 11px; border-radius: 1px; background: var(--faint); border: 2px solid var(--s1); }
-    .tl-item.critical .dot { background: var(--critical); } .tl-item.high .dot { background: var(--serious); } .tl-item.medium .dot { background: var(--warn); } .tl-item.low .dot { background: var(--good); }
-    .tl-item.maintenance .dot { background: var(--s1); border: 2px solid var(--ink-2); }
-    .tl-item .hd { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; font-size: 12px; color: var(--muted); }
-    .tl-item .hd .when { font-family: var(--f-mono); }
-    .tl-item .sm { font-weight: 600; margin-top: 4px; }
-    .tl-item .qt { color: var(--ink-2); font-size: 14px; margin-top: 2px; }
     .filters { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 14px; }
     .filters button.on { border-color: var(--cat); color: var(--ink); box-shadow: inset 0 -2px 0 var(--cat); }
     #mini { height: 300px; border-radius: 4px; background: var(--bg); border: 1px solid var(--line); }
@@ -73,7 +57,7 @@
       <div class="panel panel-pad">
         <div class="row spread" style="margin-bottom:12px;align-items:baseline"><h3 style="font-family:var(--f-display);font-size:28px;font-weight:700">History</h3><span class="count mono muted" style="font-size:12px" id="tlCount"></span></div>
         <div class="filters" id="filters"></div>
-        <div class="tl" id="timeline"></div>
+        <div id="timeline"></div>
       </div>
       <div class="stack">
         <div class="panel panel-pad">

@@ -5,7 +5,7 @@ import {
   COMPONENTS, SYMPTOMS, CONDITIONS, HAZARDS, CATEGORIES, SEVERITIES, ROLES,
   matchAll, extractFaultCodes, canonical, normalizeCode, sevRank,
 } from './vocab.js';
-import { llmEnabled, structured, describeLlmError } from './llm.js';
+import { llmEnabled, llmInfo, structured, describeLlmError } from './llm.js';
 
 const uniq = (arr) => [...new Set(arr.filter(Boolean))];
 const firstSentence = (t) => {
@@ -127,21 +127,68 @@ export function ruleExtract(rawText, ctx = {}) {
   const memory_facts = [];
   if (isCompletion) memory_facts.push(`Service record: ${firstSentence(rawText)}`);
 
-  return {
+  const base = {
     summary, category, severity,
     components: uniq(components), symptoms: uniq(problemSymptoms), fault_codes: uniq(fault_codes),
     conditions: uniq(conditions), safety_hazards: uniq(safety_hazards),
     is_mechanical_failure, needs_engineering,
     action_items: actions, operator_guidance, likely_causes: [], memory_facts,
   };
+  return { ...base, ...ruleIntent(text, rawText, base, isCompletion) };
+}
+
+export const INTENTS = ['new_issue', 'update_existing', 'resolved', 'request_advice', 'request_help', 'question', 'correction', 'delete_report', 'routine_log'];
+const RESOLVED_RE = /\b(fixed|resolved|repaired|sorted( it)? out|took care of|working (again|fine|now)|back (in service|to normal|up and running|in operation)|good to go|problem solved|no longer (leaking|overheating|making)|all clear now)\b/;
+const ADVICE_RE = /\b(advise|advice|what (should|do|can) (i|we) do|what now|how (do|should|can) (i|we)|should i|can i keep|is it safe|recommend|next steps?)\b/;
+const HELP_RE = /\b(need|send|request(ing)?|get me|bring|call)\b.{0,30}\b(technician|mechanic|tech|parts?|fuel( truck)?|spotter|operator|help|someone|service truck|lowboy|tow)\b/;
+const CORRECTION_RE = /\b(i meant|correction|ignore (my|the) (last|previous)|scratch that|(last|previous) (report|one) was wrong|wrong (machine|unit|part|report)|disregard|should have said)\b/;
+// "Delete my last report", "remove the report about the hose", "scratch that": take reports off the record.
+const DELETE_RE = /\b(delete|remove|erase|cancel|scrap|discard|wipe|get rid of|take (out|down)|throw (out|away)|withdraw)\b[^.?!]{0,60}\b(reports?|logs?|entr(y|ies)|notes?|messages?|records?|requests?|submissions?|last one|that one|previous one)\b|^(please )?(delete|erase|scrap|remove) (that|this|it)\b|^(never ?mind|scratch that|disregard (that|my last|the last)|forget (that|it|my last))\b/;
+const DELETE_WORDS_RE = /\b(delete|remove|erase|cancel|scrap|discard|wipe|get rid|withdraw|ignore|disregard|never ?mind|scratch|forget|take (that|it) back|undo)\b/i;
+const REPLACEMENT_RE = /\b(i meant|instead|should (have )?(said|been|be)|actually (it'?s|it was|the))\b/;
+const UPDATE_RE = /\b(update|still|getting worse|worse now|follow[- ]?up|came back)\b/;
+const QUESTION_RE = /\?\s*$|^(when|what|how|which|who|is|are|does|do|can|should|where|why)\b/;
+
+/** Offline intent detection — what the person wants done, not just what they saw. */
+function ruleIntent(lower, rawText, ex, isCompletion) {
+  const hasProblem = ex.components.length > 0 || ex.symptoms.length > 0 || ex.safety_hazards.length > 0;
+  const wants_advice = ADVICE_RE.test(lower);
+  const help = lower.match(HELP_RE);
+  let intent = 'new_issue';
+  if (DELETE_RE.test(lower) && !REPLACEMENT_RE.test(lower)) intent = 'delete_report';
+  else if (CORRECTION_RE.test(lower)) intent = hasProblem ? 'correction' : 'delete_report';
+  else if ((RESOLVED_RE.test(lower) || isCompletion) && !/\b(still|again|not fixed|didn'?t (fix|work))\b/.test(lower)) intent = 'resolved';
+  else if (help) intent = 'request_help';
+  else if (wants_advice) intent = 'request_advice';
+  else if (UPDATE_RE.test(lower) && hasProblem) intent = 'update_existing';
+  else if (!hasProblem && QUESTION_RE.test(rawText.trim().toLowerCase())) intent = 'question';
+  else if (!hasProblem && ex.severity === 'low') intent = 'routine_log';
+  return {
+    intent, wants_advice: wants_advice || intent === 'request_advice',
+    references_alert_id: 0, references_report_id: 0, delete_report_ids: [],
+    resolution: intent === 'resolved' ? firstSentence(rawText) : '',
+    advice_steps: [],
+    help_role: help ? (/fuel|spotter|operator/.test(help[0]) ? 'site_manager' : 'technician') : 'none',
+    help_request: help ? firstSentence(rawText) : '',
+  };
 }
 
 const EXTRACTION_SCHEMA = {
   type: 'object',
   additionalProperties: false,
-  required: ['summary', 'category', 'severity', 'components', 'symptoms', 'fault_codes', 'conditions', 'safety_hazards',
+  required: ['intent', 'wants_advice', 'references_alert_id', 'references_report_id', 'delete_report_ids', 'resolution', 'advice_steps', 'help_role', 'help_request',
+    'summary', 'category', 'severity', 'components', 'symptoms', 'fault_codes', 'conditions', 'safety_hazards',
     'is_mechanical_failure', 'needs_engineering', 'action_items', 'operator_guidance', 'likely_causes', 'memory_facts'],
   properties: {
+    intent: { type: 'string', enum: INTENTS },
+    wants_advice: { type: 'boolean' },
+    references_alert_id: { type: 'integer', description: 'id of the OPEN ISSUE this note resolves or updates, else 0' },
+    references_report_id: { type: 'integer', description: 'for a correction: id of the RECENT REPORT being corrected, else 0' },
+    delete_report_ids: { type: 'array', items: { type: 'integer' }, description: 'for delete_report: ids of the RECENT REPORTS to delete, else empty' },
+    resolution: { type: 'string', description: 'if resolved: what was done, in the reporter\'s own words (trim filler, never paraphrase); empty if they did not say' },
+    advice_steps: { type: 'array', items: { type: 'string' }, description: '2-4 ordered, imperative next steps for the reporter' },
+    help_role: { type: 'string', enum: [...ROLES, 'none'] },
+    help_request: { type: 'string', description: 'what person, part or service was asked for, in the reporter\'s own words; else empty' },
     summary: { type: 'string', description: 'One-line headline, <= 90 chars, e.g. "Leak — Hydraulic hose at boom foot"' },
     category: { type: 'string', enum: CATEGORIES },
     severity: { type: 'string', enum: SEVERITIES },
@@ -166,7 +213,19 @@ const EXTRACTION_SCHEMA = {
 };
 
 const SYSTEM = `You are the perception layer of Cat Track, a persistent memory system for Caterpillar machines and job sites.
-Field crews dictate short, messy voice notes (speech-to-text errors are common). Turn each note into a structured observation.
+Field crews dictate short, messy voice notes (speech-to-text errors are common). Work out what the person wants done, then turn the note into a structured observation.
+
+Intent (what the person wants — pick one):
+- new_issue: reports a problem that is not already among the OPEN ISSUES.
+- update_existing: adds information about a problem already among the OPEN ISSUES (same part, "still", "worse") — set references_alert_id.
+- resolved: says a problem was fixed or handled — set references_alert_id to the open issue it fixes (0 if unclear), resolution = what was done. Use category "maintenance", severity "low", no action_items, needs_engineering false.
+- request_advice: asks what to do or how to proceed — set wants_advice and give advice_steps. If it also describes a problem, still extract the problem fully.
+- request_help: asks for a person, part or service to be sent — set help_role and help_request.
+- question: asks for information (service due, specs, history) without reporting a problem.
+- correction: says an earlier report was wrong AND gives the right details — set references_report_id from RECENT REPORTS, and extract the corrected problem.
+- delete_report: asks to delete, remove, cancel or ignore one or more earlier reports without giving replacement details ("delete my last report", "scratch that", "remove the report about the boom hose", "delete everything I sent today"). Set delete_report_ids from RECENT REPORTS: match the part, problem, author and time they describe; "my last report" = the newest one by this reporter. Leave it empty if you can't tell. Parts or symptoms they mention describe the report to delete, not a new problem: use category "observation", severity "low", no action_items, no advice_steps, needs_engineering false.
+- routine_log: an inspection or routine service with nothing wrong.
+Only use ids that appear in the lists provided. advice_steps: 2-4 short, ordered, imperative steps the reporter can take now, safety first, grounded in the history, known fixes and documents; give them whenever wants_advice is true or severity is medium or worse, otherwise an empty list.
 
 Rules:
 - Use these canonical names whenever they fit.
@@ -182,51 +241,79 @@ Rules:
 - operator_guidance: 1-2 plain-language sentences spoken directly to the operator about what to do right now.
 - likely_causes: 0-3 short technician-facing hypotheses grounded in the machine's history when relevant.
 - memory_facts: 0-2 durable facts worth remembering about THIS machine long-term (e.g. "Boom hose re-routed with abrasion sleeve on 2026-10-02"). Empty if nothing durable.
-- Use the provided machine history and known fixes to inform causes and guidance, but never invent facts that aren't supported.`;
+- Use the provided machine history, known fixes and product documents to inform causes and guidance. If a policy or spec in the documents applies, follow it in operator_guidance and action_items. Never invent facts that aren't supported.`;
 
-/** Claude-backed extraction with the machine's memory as context; falls back to the rule engine. */
+/** Rule engine first; the model review (if any) runs separately via modelExtract. */
 export async function extractObservation(rawText, ctx = {}) {
   const rules = ruleExtract(rawText, ctx);
   if (!llmEnabled() || ctx.forceRules) return { ...rules, ai_mode: 'rules' };
+  try { return await modelExtract(rawText, ctx, rules); } catch (err) {
+    console.warn('[extract] model extraction failed, using rule engine:', describeLlmError(err));
+    return { ...rules, ai_mode: 'rules', ai_error: describeLlmError(err) };
+  }
+}
 
-  const history = (ctx.history || []).map((h) => `- ${h.created_at.slice(0, 10)} [${h.severity}/${h.category}] ${h.summary}`).join('\n') || '- (no prior reports)';
-  const fixes = (ctx.fixes || []).map((f) => `- ${f.title} (${f.component}/${f.symptom}; worked ${f.success}x, failed ${f.fail}x)`).join('\n') || '- (none)';
+/** Model-backed extraction with the machine's memory as context. Throws on failure. */
+export async function modelExtract(rawText, ctx = {}, rules = ruleExtract(rawText, ctx)) {
+
+  const age = (iso) => { const m = Math.round((Date.now() - new Date(iso).getTime()) / 60000); return m < 90 ? `${m} min ago` : m < 2880 ? `${Math.round(m / 60)} h ago` : `${Math.round(m / 1440)} d ago`; };
+  const history = (ctx.history || []).map((h) => `- [R${h.id}] ${h.created_at.slice(0, 10)}, ${age(h.created_at)}${h.person_name ? `, by ${h.person_name}` : ''} [${h.severity}/${h.category}] ${h.summary}`).join('\n') || '- (no prior reports)';
+  const open = (ctx.openAlerts || []).map((a) => `- [${a.id}] ${a.severity} · ${a.title} · opened ${a.created_at.slice(0, 10)}`).join('\n') || '- (none)';
+  const fixes = (ctx.fixes || []).slice(0, 6).map((f) => `- ${f.title} (${f.component}/${f.symptom}; worked ${f.success}x, failed ${f.fail}x)`).join('\n') || '- (none)';
   const machine = ctx.asset
     ? `${ctx.asset.id}: ${ctx.asset.model} (${ctx.asset.family}), ${Math.round(ctx.asset.smu_hours)} SMU hours, site ${ctx.siteName || ctx.asset.site_id}${ctx.siteClimate ? `, climate: ${ctx.siteClimate}` : ''}`
     : 'Unknown machine';
-  const content = [];
-  if (ctx.photo) {
-    content.push({ type: 'image', source: { type: 'base64', media_type: ctx.photo.mediaType, data: ctx.photo.data } });
-  }
-  content.push({
-    type: 'text',
-    text: `Machine: ${machine}\nReporter: ${ctx.reporter || 'unknown'} (${ctx.reporterRole || 'operator'})\nSource: ${ctx.source || 'voice'}\n\nRecent machine memory:\n${history}\n\nKnown fixes for this model:\n${fixes}\n\n${ctx.photo ? 'A photo from the field is attached; use it as evidence.\n\n' : ''}Field note:\n"""${rawText}"""`,
-  });
+  const docs = (ctx.docs || []).map((d) => `- [D${d.doc_id}] ${d.title} (${d.doc_type}): ${d.excerpt}`).join('\n') || '- (none)';
+  const text = `Machine: ${machine}\nReporter: ${ctx.reporter || 'unknown'} (${ctx.reporterRole || 'operator'})\nSource: ${ctx.source || 'voice'}\n\nOPEN ISSUES on this machine (id in brackets):\n${open}\n\nRECENT REPORTS on this machine:\n${history}\n\nKnown fixes for this model:\n${fixes}\n\nRelevant product documents (spec sheets, policies):\n${docs}\n\n${ctx.photo ? 'A photo from the field may be attached; use it as evidence if present.\n\n' : ''}Field note:\n"""${rawText}"""`;
 
-  try {
-    const out = await structured({ system: SYSTEM, content, schema: EXTRACTION_SCHEMA, effort: 'low' });
-    const snap = (list, arr) => uniq((arr || []).map((x) => canonical(list, x)));
+  {
+    const out = await structured({ system: SYSTEM, text, image: ctx.photo, schema: EXTRACTION_SCHEMA, ...(ctx.timeoutMs ? { timeoutMs: ctx.timeoutMs } : {}) });
+    // Open models don't always honour the schema exactly, so coerce every field defensively.
+    const list = (x) => (Array.isArray(x) ? x : x ? [x] : []).filter((v) => typeof v === 'string' && v.trim());
+    const snap = (vocab, arr) => uniq(list(arr).map((x) => canonical(vocab, x)));
     const merged = {
       summary: String(out.summary || rules.summary).slice(0, 140),
       category: CATEGORIES.includes(out.category) ? out.category : rules.category,
       severity: SEVERITIES.includes(out.severity) ? out.severity : rules.severity,
       components: snap(COMPONENTS, out.components),
       symptoms: snap(SYMPTOMS, out.symptoms),
-      fault_codes: uniq([...(out.fault_codes || []).map(normalizeCode), ...rules.fault_codes]),
+      fault_codes: uniq([...list(out.fault_codes).map(normalizeCode), ...rules.fault_codes]),
       conditions: snap(CONDITIONS, out.conditions),
       safety_hazards: snap(HAZARDS, out.safety_hazards),
       is_mechanical_failure: Boolean(out.is_mechanical_failure),
       needs_engineering: Boolean(out.needs_engineering),
-      action_items: (out.action_items || []).filter((a) => a && a.text).slice(0, 6),
-      operator_guidance: out.operator_guidance || rules.operator_guidance,
-      likely_causes: (out.likely_causes || []).slice(0, 3),
-      memory_facts: (out.memory_facts || []).slice(0, 2),
+      action_items: (Array.isArray(out.action_items) ? out.action_items : [])
+        .filter((a) => a && typeof a.text === 'string' && a.text.trim())
+        .map((a) => ({ text: a.text.trim().slice(0, 240), assignee_role: ROLES.includes(a.assignee_role) ? a.assignee_role : 'site_manager' }))
+        .slice(0, 6),
+      operator_guidance: typeof out.operator_guidance === 'string' && out.operator_guidance.trim() ? out.operator_guidance.trim() : rules.operator_guidance,
+      likely_causes: list(out.likely_causes).slice(0, 3),
+      memory_facts: list(out.memory_facts).slice(0, 2),
+      intent: INTENTS.includes(out.intent) ? out.intent : rules.intent,
+      wants_advice: Boolean(out.wants_advice) || rules.wants_advice,
+      references_alert_id: Number.isInteger(Number(out.references_alert_id)) ? Number(out.references_alert_id) : 0,
+      references_report_id: Number.isInteger(Number(out.references_report_id)) ? Number(out.references_report_id) : 0,
+      delete_report_ids: (Array.isArray(out.delete_report_ids) ? out.delete_report_ids : []).map(Number).filter((n) => Number.isInteger(n) && n > 0).slice(0, 25),
+      resolution: typeof out.resolution === 'string' ? out.resolution.trim().slice(0, 240) : '',
+      advice_steps: list(out.advice_steps).map((x) => x.trim().slice(0, 220)).slice(0, 5),
+      help_role: [...ROLES, 'none'].includes(out.help_role) ? out.help_role : 'none',
+      help_request: typeof out.help_request === 'string' ? out.help_request.trim().slice(0, 200) : '',
     };
-    // Safety net: never let the model downgrade a critical hazard the rule engine is sure about.
-    if (sevRank(rules.severity) === 3 && sevRank(merged.severity) < 3) merged.severity = 'critical';
-    return { ...merged, ai_mode: 'claude' };
-  } catch (err) {
-    console.warn('[extract] Claude extraction failed, using rule engine:', describeLlmError(err));
-    return { ...rules, ai_mode: 'rules', ai_error: describeLlmError(err) };
+    // Deleting reports must come from the person's own words, never from a model's guess: a real
+    // problem misread as "delete" would file nothing and remove something.
+    if (merged.intent === 'delete_report' && !DELETE_WORDS_RE.test(rawText)) merged.intent = rules.intent === 'delete_report' ? 'new_issue' : rules.intent;
+    // Safety net: never let the model downgrade a critical hazard the rule engine is sure about —
+    // unless the note is about something already fixed, a correction or a question.
+    if (!['resolved', 'correction', 'question', 'routine_log', 'delete_report'].includes(merged.intent) && sevRank(rules.severity) === 3 && sevRank(merged.severity) < 3) merged.severity = 'critical';
+    // ...and never more than one level below what the safety rules found for a reported problem.
+    if (!['resolved', 'question', 'routine_log', 'delete_report'].includes(merged.intent) && sevRank(merged.severity) < sevRank(rules.severity) - 1) merged.severity = SEVERITIES[sevRank(rules.severity) - 1];
+    // An empty model answer is worse than the rule engine's; keep the rules' entities in that case.
+    if (!merged.components.length && !merged.symptoms.length && !merged.safety_hazards.length && (rules.components.length || rules.safety_hazards.length)) {
+      Object.assign(merged, { components: rules.components, symptoms: rules.symptoms, safety_hazards: rules.safety_hazards, conditions: merged.conditions.length ? merged.conditions : rules.conditions });
+      merged.is_mechanical_failure ||= rules.is_mechanical_failure;
+      merged.needs_engineering ||= rules.needs_engineering;
+    }
+    if (!merged.action_items.length) merged.action_items = rules.action_items;
+    return { ...merged, ai_mode: 'llm', ai_label: llmInfo().label };
   }
 }
