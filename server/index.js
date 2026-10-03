@@ -116,6 +116,25 @@ app.get('/api/reports', (req, res) => {
                   ${site ? 'WHERE r.site_id = ?' : ''} ORDER BY r.created_at DESC LIMIT ?`, ...(site ? [site] : []), limit).map(memory.hydrateReport));
 });
 
+// The full path one report took: what it said, what was understood, who was alerted, which case it joined.
+app.get('/api/reports/:id/trace', (req, res) => {
+  const id = Number(req.params.id);
+  const report = memory.hydrateReport(q.get(`SELECT r.*, p.name AS person_name, p.role AS person_role, a.model, a.family, s.name AS site_name
+      FROM reports r LEFT JOIN people p ON p.id = r.person_id LEFT JOIN assets a ON a.id = r.asset_id LEFT JOIN sites s ON s.id = r.site_id WHERE r.id = ?`, id));
+  if (!report) return res.status(404).json({ error: 'Report not found' });
+  const alert = alertRow(q.get('SELECT * FROM alerts WHERE report_id = ? ORDER BY id LIMIT 1', id));
+  const ids = (report.extraction.similar || []).map((s) => s.id);
+  const similar = ids.length ? q.all(`SELECT id, asset_id, created_at, summary FROM reports WHERE id IN (${ids.map(() => '?').join(',')})`, ...ids) : [];
+  const engCase = q.get('SELECT c.* FROM eng_cases c JOIN case_reports cr ON cr.case_id = c.id WHERE cr.report_id = ?', id);
+  res.json({
+    report, alert,
+    actions: alert ? q.all('SELECT * FROM action_items WHERE alert_id = ?', alert.id) : [],
+    recipients: alert ? recipientsFor(alert.site_id, alert.audience).filter((p) => p.id !== report.person_id) : [],
+    similar: similar.map((s) => ({ ...s, ...(report.extraction.similar || []).find((x) => x.id === s.id) })),
+    case: engCase || null,
+  });
+});
+
 // ---------- site command center ----------
 app.get('/api/dashboard', (req, res) => {
   const site = req.query.site || null;

@@ -6,84 +6,83 @@
   <title>Machine Memory</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700&family=Barlow+Condensed:wght@600;700;800&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700&family=Barlow+Condensed:wght@600;700;800&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/css/app.css">
   <style>
-    .hero { display: grid; grid-template-columns: auto 1fr auto; gap: 18px; align-items: center; padding: 18px; }
-    .hero .ico { width: 76px; height: 76px; border-radius: 16px; background: var(--yellow); color: var(--yellow-ink); display: grid; place-items: center; }
-    .hero .ico svg { width: 50px; height: 50px; stroke-width: 1.7; }
-    .hero h1 { font-size: 36px; line-height: 1; }
-    .facts { display: grid; grid-template-columns: repeat(6, minmax(90px, 1fr)); gap: 10px; margin-top: 12px; }
-    .fact .k { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .1em; font-weight: 700; }
-    .fact .v { font-family: var(--font-cond); font-size: 21px; font-weight: 700; }
-    .ring { width: 104px; height: 104px; position: relative; }
+    .hero { display: grid; grid-template-columns: 84px minmax(0, 1fr) auto; gap: 22px; align-items: start; padding: 22px; }
+    .hero .ico { width: 84px; height: 84px; border-radius: 4px; background: var(--cat); color: var(--cat-ink); display: grid; place-items: center; }
+    .hero .ico svg { width: 58px; height: 58px; stroke-width: 1.5; }
+    .hero h1 { font-size: 44px; line-height: .95; }
+    .facts { display: flex; flex-wrap: wrap; gap: 12px 32px; margin-top: 16px; }
+    .fact .k { font-family: var(--f-mono); font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: .08em; }
+    .fact .v { font-weight: 600; font-size: 18px; }
+    .ring { width: 100px; height: 100px; position: relative; }
     .ring svg { width: 100%; height: 100%; transform: rotate(-90deg); }
-    .ring .val { position: absolute; inset: 0; display: grid; place-items: center; text-align: center; font-family: var(--font-cond); font-weight: 800; font-size: 28px; line-height: 1; }
-    .ring .val small { display: block; font-size: 11px; color: var(--muted); letter-spacing: .1em; font-family: var(--font); font-weight: 700; }
-    .cols { display: grid; grid-template-columns: 360px 1fr 380px; gap: 16px; margin-top: 16px; }
+    .ring .val { position: absolute; inset: 0; display: grid; place-items: center; text-align: center; font-weight: 600; font-size: 28px; line-height: 1; }
+    .ring .val small { display: block; font-family: var(--f-mono); font-size: 9px; color: var(--muted); letter-spacing: .08em; font-weight: 500; margin-top: 4px; }
+    .cols { display: grid; grid-template-columns: 340px minmax(0, 1fr) 380px; gap: 18px; margin-top: 18px; align-items: start; }
     @media (max-width: 1250px) { .cols { grid-template-columns: 1fr 1fr; } .cols > :last-child { grid-column: 1 / -1; } }
-    @media (max-width: 860px) { .cols { grid-template-columns: 1fr; } .hero { grid-template-columns: 1fr; } .facts { grid-template-columns: repeat(3, 1fr); } }
-    .tabs { display: flex; gap: 4px; background: #0f1113; border: 1px solid var(--line); border-radius: 11px; padding: 4px; }
-    .tabs button { flex: 1; border: none; background: transparent; padding: 7px 6px; border-radius: 8px; font-weight: 700; font-size: 13px; color: var(--muted); cursor: pointer; }
-    .tabs button.on { background: var(--yellow); color: var(--yellow-ink); }
-    .ins { padding: 10px 12px; border-radius: 10px; background: var(--panel-2); border: 1px solid var(--line); }
-    .ins + .ins { margin-top: 8px; }
-    .ins.high { border-color: rgba(255,77,79,.5); }
-    .ins.medium { border-color: rgba(255,138,31,.45); }
-    .ins .tt { font-weight: 700; font-size: 14px; }
-    .ins .dd { color: var(--muted); font-size: 13px; margin-top: 3px; }
-    .mem { display: flex; gap: 9px; font-size: 14px; padding: 8px 0; border-bottom: 1px solid var(--line); }
+    @media (max-width: 860px) { .cols { grid-template-columns: 1fr; } .hero { grid-template-columns: 1fr; } }
+    .tabs { display: flex; border-bottom: 1px solid var(--line); }
+    .tabs button { border: 0; background: transparent; padding: 8px 0; margin-right: 18px; font-weight: 600; font-size: 14px; color: var(--muted); cursor: pointer; border-bottom: 3px solid transparent; margin-bottom: -1px; }
+    .tabs button.on { color: var(--ink); border-bottom-color: var(--cat); }
+    .ins { padding: 11px 0 11px 14px; border-bottom: 1px solid var(--line); position: relative; }
+    .ins::before { content: ''; position: absolute; left: 0; top: 14px; width: 6px; height: 6px; border-radius: 1px; background: var(--faint); }
+    .ins.high::before { background: var(--critical); }
+    .ins.medium::before { background: var(--serious); }
+    .ins .tt { font-weight: 600; font-size: 14px; }
+    .ins .dd { color: var(--ink-2); font-size: 13px; margin-top: 3px; }
+    .mem { display: grid; grid-template-columns: 20px 1fr; gap: 9px; font-size: 14px; padding: 9px 0; border-bottom: 1px solid var(--line); }
     .mem:last-child { border-bottom: none; }
-    .mem .icon { color: var(--yellow); margin-top: 2px; }
-    .tl { position: relative; padding-left: 26px; }
-    .tl::before { content: ''; position: absolute; left: 10px; top: 4px; bottom: 4px; width: 2px; background: var(--line); }
-    .tl-item { position: relative; padding: 0 0 16px; }
-    .tl-item .dot { position: absolute; left: -22px; top: 3px; width: 14px; height: 14px; border-radius: 50%; background: var(--faint); border: 3px solid var(--bg); }
-    .tl-item.critical .dot { background: var(--critical); } .tl-item.high .dot { background: var(--high); } .tl-item.medium .dot { background: var(--medium); } .tl-item.low .dot { background: var(--low); }
-    .tl-item.maintenance .dot { background: var(--info); }
-    .tl-item .hd { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; font-size: 13px; color: var(--muted); }
-    .tl-item .sm { font-weight: 700; margin-top: 3px; }
-    .tl-item .qt { color: var(--muted); font-size: 14px; margin-top: 2px; }
-    .filters { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 12px; }
-    .filters button { cursor: pointer; }
-    .filters button.on { border-color: var(--yellow); color: var(--yellow); }
-    #mini { height: 300px; border-radius: 12px; background: #0f1113; border: 1px solid var(--line); }
-    .ask-log { max-height: 320px; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; margin-bottom: 10px; }
-    .bubble { padding: 9px 12px; border-radius: 12px; font-size: 14px; max-width: 92%; }
-    .bubble.me { align-self: flex-end; background: var(--yellow); color: var(--yellow-ink); font-weight: 600; }
-    .bubble.bot { align-self: flex-start; background: var(--panel-2); border: 1px solid var(--line); }
-    .trace { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
-    .trace span { font-size: 11px; font-family: ui-monospace, Menlo, monospace; color: var(--purple); background: rgba(180,140,255,.08); border: 1px solid rgba(180,140,255,.3); border-radius: 6px; padding: 1px 6px; }
-    .qr-mini { width: 92px; height: 92px; background: #fff; border-radius: 10px; padding: 4px; }
+    .mem .icon { color: var(--muted); margin-top: 3px; }
+    .tl { position: relative; padding-left: 24px; }
+    .tl::before { content: ''; position: absolute; left: 6px; top: 6px; bottom: 6px; width: 1px; background: var(--line-strong); }
+    .tl-item { position: relative; padding: 0 0 18px; }
+    .tl-item .dot { position: absolute; left: -23px; top: 5px; width: 11px; height: 11px; border-radius: 1px; background: var(--faint); border: 2px solid var(--s1); }
+    .tl-item.critical .dot { background: var(--critical); } .tl-item.high .dot { background: var(--serious); } .tl-item.medium .dot { background: var(--warn); } .tl-item.low .dot { background: var(--good); }
+    .tl-item.maintenance .dot { background: var(--s1); border: 2px solid var(--ink-2); }
+    .tl-item .hd { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; font-size: 12px; color: var(--muted); }
+    .tl-item .hd .when { font-family: var(--f-mono); }
+    .tl-item .sm { font-weight: 600; margin-top: 4px; }
+    .tl-item .qt { color: var(--ink-2); font-size: 14px; margin-top: 2px; }
+    .filters { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 14px; }
+    .filters button.on { border-color: var(--cat); color: var(--ink); box-shadow: inset 0 -2px 0 var(--cat); }
+    #mini { height: 300px; border-radius: 4px; background: var(--bg); border: 1px solid var(--line); }
+    .ask-log { max-height: 340px; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; margin-bottom: 12px; }
+    .bubble { font-size: 14px; max-width: 94%; }
+    .bubble.me { align-self: flex-end; background: var(--s3); border-radius: 4px; padding: 7px 11px; font-weight: 500; }
+    .bubble.bot { align-self: flex-start; border-left: 2px solid var(--cat); padding: 2px 0 2px 12px; }
+    .trace { margin-top: 6px; font-family: var(--f-mono); font-size: 11px; color: var(--faint); }
+    .qr-mini { width: 92px; height: 92px; background: #fff; border-radius: 3px; padding: 5px; display: block; }
   </style>
 </head>
 <body>
   <div id="top"></div>
   <div class="page">
-    <div class="panel hero" id="hero"><div class="empty">Loading machine memory…</div></div>
+    <div class="panel hero" id="hero"><span class="sk" style="width:84px;height:84px"></span><div><span class="sk line" style="width:30%"></span><span class="sk title" style="height:40px;margin-top:10px"></span><span class="sk line" style="width:70%;margin-top:16px"></span></div><span class="sk" style="width:100px;height:100px;border-radius:50%"></span></div>
     <div class="cols">
       <div class="stack">
         <div class="panel panel-pad">
-          <div class="row spread" style="margin-bottom:10px"><h3>Insights for</h3></div>
+          <h3>What to watch</h3><div class="muted" style="font-size:13px;margin:2px 0 10px">Depends on who’s asking.</div>
           <div class="tabs" id="roleTabs"><button data-r="operator" class="on">Operator</button><button data-r="technician">Technician</button><button data-r="fleet_manager">Fleet manager</button></div>
           <div id="insights" style="margin-top:12px"></div>
         </div>
-        <div class="panel panel-pad"><h3 style="margin-bottom:6px">What this machine remembers</h3><div id="memory"></div></div>
-        <div class="panel panel-pad"><h3 style="margin-bottom:8px">Open alerts & tasks</h3><div id="openItems"></div></div>
+        <div class="panel panel-pad"><h3 style="margin-bottom:6px">On record about this machine</h3><div id="memory"></div></div>
+        <div class="panel panel-pad"><h3 style="margin-bottom:8px">Still open</h3><div id="openItems"></div></div>
       </div>
       <div class="panel panel-pad">
-        <div class="row spread" style="margin-bottom:10px"><h3>Lifecycle memory</h3><span class="muted" style="font-size:13px" id="tlCount"></span></div>
+        <div class="row spread" style="margin-bottom:12px;align-items:baseline"><h3 style="font-family:var(--f-display);font-size:28px;font-weight:700">History</h3><span class="count mono muted" style="font-size:12px" id="tlCount"></span></div>
         <div class="filters" id="filters"></div>
         <div class="tl" id="timeline"></div>
       </div>
       <div class="stack">
         <div class="panel panel-pad">
-          <div class="row spread" style="margin-bottom:10px"><h3>Ask this machine</h3><span class="pill sev-info" id="aiMode"></span></div>
+          <div class="row spread" style="margin-bottom:10px"><h3>Ask about this machine</h3><span class="mono muted" style="font-size:12px" id="aiMode"></span></div>
           <div class="ask-log" id="askLog"></div>
-          <form class="row" id="askForm"><input class="input" id="askInput" placeholder="Has this happened before?" autocomplete="off"><button class="btn primary">Ask</button></form>
+          <form class="row" id="askForm"><input class="input" id="askInput" placeholder="Has the boom hose been replaced before?" autocomplete="off"><button class="btn primary">Ask</button></form>
           <div class="chips" style="margin-top:8px" id="askChips"></div>
         </div>
-        <div class="panel panel-pad"><div class="row spread" style="margin-bottom:8px"><h3>Memory graph</h3><a id="graphLink" href="/graph" style="font-size:13px">Open full graph →</a></div><div id="mini"></div></div>
+        <div class="panel panel-pad"><div class="row spread" style="margin-bottom:8px"><h3>What it’s connected to</h3><a id="graphLink" href="/graph" style="font-size:13px">Whole fleet</a></div><div id="mini"></div></div>
       </div>
     </div>
   </div>

@@ -1,7 +1,7 @@
 // Operator panel: identify the unit (type / QR), dictate what's happening, and get the
 // machine's memory + crew alerts back in seconds.
 (function () {
-  const { api, esc, ago, sevPill, statusPill, healthBar, toast, connectStream, store, icon, ROLE, modal } = CT;
+  const { api, esc, ago, dateShort, sevPill, statusPill, healthBar, toast, connectStream, store, icon, machineIcon, emptyState, skeleton, ROLE, modal } = CT;
   const $ = (id) => document.getElementById(id);
 
   const state = { unit: null, people: [], me: null, photo: null, listening: false, tts: store.get('tts', true), lastResult: null };
@@ -28,8 +28,8 @@
   }
   $('meChip').onclick = () => {
     const field = state.people.filter((p) => ['operator', 'technician', 'site_manager', 'safety_officer'].includes(p.role));
-    const m = modal(`<h2>Who's reporting?</h2><p class="muted" style="margin-top:-6px">Cat Track tailors guidance to your role and remembers who saw what.</p>
-      <div class="people-list">${field.map((p) => `<button data-id="${p.id}" class="${state.me?.id === p.id ? 'sel' : ''}">${icon('user')}<span class="grow"><b>${esc(p.name)}</b><br><span class="muted" style="font-size:13px">${ROLE[p.role]}${p.site_name ? ' · ' + esc(p.site_name) : ''}</span></span></button>`).join('')}</div>`);
+    const m = modal(`<h2>Who's reporting?</h2><p class="muted" style="margin-top:-4px">Your name goes on the record so the technician knows who to ask, and the advice you hear back matches your job.</p>
+      <div class="people-list">${field.map((p) => `<button data-id="${p.id}" class="${state.me?.id === p.id ? 'sel' : ''}"><span><b>${esc(p.name)}</b><br><span class="muted" style="font-size:13px">${ROLE[p.role]}${p.site_name ? ' · ' + esc(p.site_name) : ''}</span></span>${state.me?.id === p.id ? icon('check') : ''}</button>`).join('')}</div>`);
     m.el.querySelectorAll('button[data-id]').forEach((b) => b.onclick = () => {
       state.me = state.people.find((p) => p.id === b.dataset.id); store.set('me', state.me.id); renderMe(); m.close();
       toast(`Reporting as ${esc(state.me.name)}`, 'good');
@@ -52,6 +52,9 @@
     if (!id) return;
     const seq = ++loadSeq;
     $('unitError').classList.add('hidden');
+    if (!state.unit || state.unit.asset.id !== id.toUpperCase()) {
+      $('unitCard').innerHTML = `<div class="unit-head"><span class="sk" style="width:60px;height:60px"></span><div><span class="sk title"></span><span class="sk line" style="width:70%"></span></div></div><div style="margin-top:16px">${skeleton(3)}</div>`;
+    }
     try {
       const data = await api(`/api/assets/${encodeURIComponent(id)}`);
       if (seq !== loadSeq) return;
@@ -74,9 +77,7 @@
     } catch (err) {
       if (seq !== loadSeq) return;
       state.unit = null;
-      $('unitCard').classList.add('hidden');
-      $('unitError').textContent = err.message;
-      $('unitError').classList.remove('hidden');
+      renderNotFound(id, err.message);
       updateSubmit();
     }
   }
@@ -87,29 +88,50 @@
     const top = memory.filter((m) => m.kind !== 'service').slice(0, 3);
     $('unitCard').innerHTML = `
       <div class="unit-head">
-        <div class="unit-ico">${icon('machine')}</div>
+        <div class="unit-ico">${machineIcon(asset.family)}</div>
         <div class="grow">
           <div class="row spread" style="align-items:flex-start"><div class="unit-model">${esc(asset.model)}</div>${statusPill(asset.status)}</div>
-          <div class="unit-sub">${esc(asset.id)} · ${esc(asset.family)} · S/N ${esc(asset.serial)}</div>
-          <div class="unit-sub">${icon('pin')} ${esc(asset.site_name)}</div>
+          <div class="unit-sub"><span class="id" style="color:var(--ink)">${esc(asset.id)}</span> · ${esc(asset.family)} · S/N <span class="mono">${esc(asset.serial)}</span></div>
+          <div class="unit-sub">${esc(asset.site_name)}</div>
         </div>
       </div>
-      <div style="margin-top:12px">
-        <div class="row spread" style="font-size:13px;margin-bottom:5px"><span class="muted">Machine health</span><b>${asset.health}/100</b></div>
+      <div style="margin-top:14px">
+        <div class="row spread" style="font-size:13px;margin-bottom:6px"><span class="muted">Health, from open issues and age</span><span class="mono">${asset.health}/100</span></div>
         ${healthBar(asset.health)}
       </div>
       <div class="meta-grid">
-        <div class="meta"><div class="k">SMU hours</div><div class="v">${Math.round(asset.smu_hours).toLocaleString()}</div></div>
+        <div class="meta"><div class="k">Hours</div><div class="v">${Math.round(asset.smu_hours).toLocaleString()}</div></div>
         <div class="meta"><div class="k">Fuel</div><div class="v">${Math.round(asset.fuel_pct)}%</div></div>
-        <div class="meta"><div class="k">Open issues</div><div class="v" style="color:${alerts.length ? 'var(--high)' : 'inherit'}">${alerts.length}</div></div>
-        <div class="meta"><div class="k">Last service</div><div class="v">${ago(asset.last_service_at)}</div></div>
+        <div class="meta"><div class="k">Open issues</div><div class="v">${alerts.length}</div></div>
+        <div class="meta"><div class="k">Last service</div><div class="v">${dateShort(asset.last_service_at)}</div></div>
         <div class="meta"><div class="k">Since PM</div><div class="v">${since != null ? since + ' h' : '—'}</div></div>
-        <div class="meta"><div class="k">Memory</div><div class="v">${state.unit.stats.total} logs</div></div>
+        <div class="meta"><div class="k">On record</div><div class="v">${state.unit.stats.total} entries</div></div>
       </div>
-      ${top.length ? `<ul class="mem-list">${top.map((m) => `<li class="${m.level}">${icon(m.kind === 'fleet' ? 'graph' : m.kind === 'bulletin' ? 'wrench' : m.kind === 'pattern' ? 'alert' : 'brain')}<span>${esc(m.text)}</span></li>`).join('')}</ul>` : ''}
-      ${alerts.length ? `<div style="margin-top:10px">${alerts.slice(0, 2).map((a) => `<div class="alert-card ${esc(a.severity)}" style="margin-top:6px"><div class="t">${esc(a.title)}</div></div>`).join('')}</div>` : ''}
-      <div class="row spread" style="margin-top:12px"><span class="muted" style="font-size:13px">Operator: ${esc(asset.operator_name || '—')}</span><a href="/asset?id=${encodeURIComponent(asset.id)}">Full machine memory →</a></div>`;
-    $('unitCard').classList.remove('hidden');
+      ${top.length ? `<ul class="mem-list">${top.map((m) => `<li class="${m.level}">${icon(m.kind === 'fleet' ? 'graph' : m.kind === 'bulletin' ? 'wrench' : m.kind === 'pattern' ? 'alert' : 'history')}<span>${esc(m.text)}</span></li>`).join('')}</ul>` : '<ul class="mem-list"><li><span></span><span class="muted">Nothing unusual on record for this machine.</span></li></ul>'}
+      ${alerts.length ? `<div style="margin-top:12px">${alerts.slice(0, 2).map((a) => `<div class="alert-card ${esc(a.severity)}"><div class="t">${esc(a.title)}</div><div class="b">${ago(a.created_at)}</div></div>`).join('')}</div>` : ''}
+      <div class="row spread wrap" style="margin-top:14px;font-size:14px"><span class="muted">Assigned to ${esc(asset.operator_name || 'nobody yet')}</span><a href="/asset?id=${encodeURIComponent(asset.id)}">Full history for ${esc(asset.id)}</a></div>`;
+    $('whereTxt').textContent = asset.site_name.split(' ').slice(0, 2).join(' ');
+  }
+
+  function renderNoUnit() {
+    $('unitCard').innerHTML = `<div class="nounit" style="padding:0"><div class="tag-art">${icon('qr')}</div><div>
+      <div style="font-weight:600">Which machine are you on?</div>
+      <div class="muted" style="font-size:14px;margin-top:4px">There’s a Cat Track tag inside the cab door. Tap <b style="color:var(--ink)">Scan</b> and point your camera at it, or type the unit number printed under the code. It looks like <span class="id" style="color:var(--ink)">EX-0412</span>.</div></div></div>`;
+    $('feed').innerHTML = emptyState({ icon: 'pin', title: 'No job site yet', body: 'Alerts for the machine’s site appear here once you pick a machine.' });
+  }
+  let allAssets = null;
+  async function renderNotFound(raw, message) {
+    const typed = String(raw).toUpperCase();
+    $('unitCard').innerHTML = emptyState({ icon: 'search', error: true, title: `No machine called “${esc(typed)}”`, body: `${esc(message.startsWith('Unknown') ? 'It isn’t in the fleet record. Check the tag — unit numbers are two letters and four digits.' : message)}` });
+    try {
+      allAssets ||= await api('/api/assets');
+      const digits = typed.replace(/\D/g, '');
+      const near = allAssets.filter((a) => (digits && a.id.includes(digits.slice(-3))) || a.id.startsWith(typed.slice(0, 2))).slice(0, 4);
+      if (near.length) {
+        $('unitCard').insertAdjacentHTML('beforeend', `<div class="row wrap" style="padding:0 2px 6px 48px"><span class="muted" style="font-size:13px">Did you mean</span>${near.map((a) => `<button class="chip" data-near="${esc(a.id)}"><span class="k">${esc(a.model)}</span><span class="id">${esc(a.id)}</span></button>`).join('')}</div>`);
+        $('unitCard').querySelectorAll('[data-near]').forEach((b) => b.onclick = () => { unitInput.value = b.dataset.near; loadUnit(b.dataset.near); });
+      }
+    } catch { /* suggestions are optional */ }
   }
 
   const unitInput = $('unitInput');
@@ -217,7 +239,7 @@
 
   function renderDictate() {
     dictateBtn.classList.toggle('listening', state.listening);
-    dictateBtn.innerHTML = `${icon(state.listening ? 'stop' : 'mic')}<span class="lab">${state.listening ? 'Tap to stop' : SR ? 'Dictate' : 'Type / keyboard mic'}</span>`;
+    dictateBtn.innerHTML = `${icon(state.listening ? 'stop' : 'mic')}<span class="lab">${state.listening ? 'Tap to stop' : SR ? 'Tap to talk' : 'Type below'}</span>`;
     dictateBtn.setAttribute('aria-label', state.listening ? 'Stop dictation' : 'Start dictation');
   }
   const joinText = (...parts) => parts.map((p) => (p || '').trim()).filter(Boolean).join(' ');
@@ -225,7 +247,7 @@
   function startDictation() {
     if (!SR) {
       reportText.focus();
-      $('dictateHint').textContent = 'Voice capture isn\'t supported in this browser — tap the mic on your keyboard to dictate.';
+      $('dictateHint').textContent = 'This browser can’t listen directly. Tap the box below and use the microphone key on your keyboard instead.';
       return;
     }
     window.speechSynthesis?.cancel();
@@ -261,7 +283,7 @@
       clearTimeout(autoStop);
       renderDictate();
       if (!/error|blocked|disabled|found|network/i.test($('dictateHint').textContent)) {
-        $('dictateHint').textContent = reportText.value.trim() ? 'Got it. Edit if needed, then send.' : 'Didn\'t catch that — tap and try again.';
+        $('dictateHint').textContent = reportText.value.trim() ? 'Got it. Fix anything it misheard, then send.' : 'Didn’t catch anything. Move away from the engine noise and try again.';
       }
       updateSubmit();
     };
@@ -285,7 +307,7 @@
   }
   dictateBtn.onclick = () => (state.listening ? stopDictation() : startDictation());
   renderDictate();
-  if (!SR) $('dictateHint').textContent = 'Tip: tap the box below and use your keyboard\'s mic to dictate.';
+  if (!SR) $('dictateHint').textContent = 'This browser can’t listen directly. Use the microphone key on your keyboard in the box below.';
 
   reportText.addEventListener('input', updateSubmit);
   $('clearBtn').onclick = () => { reportText.value = ''; baseText = ''; usedVoice = false; clearPhoto(); updateSubmit(); };
@@ -318,10 +340,10 @@
   function updateSubmit() {
     const ok = Boolean(state.unit) && reportText.value.trim().length > 2;
     $('submitBtn').disabled = !ok;
-    $('submitBtn').innerHTML = state.unit ? `${icon('send')} Send report for ${esc(state.unit.asset.id)}` : `${icon('send')} Enter a unit ID first`;
+    $('submitBtn').innerHTML = state.unit ? `${icon('send')} Send report on ${esc(state.unit.asset.id)}` : 'Pick a machine first';
   }
 
-  const STEPS = ['Understanding your report', 'Linking to machine memory', 'Recalling similar events across the fleet', 'Alerting the site crew', 'Checking for CAT Engineering escalation'];
+  const STEPS = ['Reading what you said', 'Filing it under this machine', 'Checking if this has happened before', 'Telling the people on site', 'Deciding whether CAT Engineering needs it'];
   function runSteps() {
     $('progressBox').classList.remove('hidden');
     $('steps').innerHTML = STEPS.map((s) => `<li><span class="b"></span>${s}</li>`).join('');
@@ -354,7 +376,7 @@
     } catch (err) {
       finish();
       $('progressBox').classList.add('hidden');
-      toast(esc(err.message), 'high');
+      toast(`Couldn’t send: ${esc(err.message)} Your words are still in the box.`, 'high');
     } finally {
       state.submitting = false;
       updateSubmit();
@@ -373,42 +395,42 @@
 
   function renderResult(out) {
     const ex = out.extraction;
-    const chip = (cls, label, items) => items.map((x) => `<span class="chip c-${cls}"><span class="faint">${label}</span> <b>${esc(x)}</b></span>`).join('');
+    const chip = (label, items, cls = '') => items.map((x) => `<span class="chip ${cls}"><span class="k">${label}</span>${esc(x)}</span>`).join('');
     const fix = out.fixes[0];
     const box = $('resultBox');
     box.innerHTML = `
       <div class="result-banner ${esc(ex.severity)}">
-        <div class="row wrap">${sevPill(ex.severity)}<span class="pill sev-info">${esc(ex.category)}</span>${ex.ai_mode === 'claude' ? `<span class="pill" style="background:rgba(180,140,255,.15);color:#cdb4ff">${icon('brain')} Claude</span>` : ''}</div>
+        <div class="row wrap" style="gap:6px">${sevPill(ex.severity)}<span class="tag">${esc(ex.category)}</span><span class="tag">${ex.ai_mode === 'claude' ? 'read by Claude' : 'read offline'}</span></div>
         <div class="h">${esc(ex.summary)}</div>
         <div class="guidance">${esc(ex.operator_guidance)}</div>
       </div>
-      ${out.report.photo_path ? `<img src="${esc(out.report.photo_path)}" alt="Report photo" style="margin-top:12px;max-width:100%;border-radius:12px;border:1px solid var(--line)">` : ''}
-      <div class="res-sec"><h4>What Cat Track understood</h4><div class="chips">
-        ${chip('component', 'part', ex.components)}${chip('symptom', 'symptom', ex.symptoms)}${chip('code', 'code', ex.fault_codes)}${chip('condition', 'condition', ex.conditions)}${chip('hazard', 'hazard', ex.safety_hazards)}
-        ${!ex.components.length && !ex.symptoms.length && !ex.safety_hazards.length ? '<span class="muted">General observation logged to memory.</span>' : ''}
+      ${out.report.photo_path ? `<img src="${esc(out.report.photo_path)}" alt="Photo attached to this report" style="margin-top:12px;max-width:100%;border-radius:4px;border:1px solid var(--line)">` : ''}
+      <div class="res-sec"><h4>What it picked out</h4><div class="chips">
+        ${chip('part', ex.components)}${chip('symptom', ex.symptoms)}${chip('code', ex.fault_codes)}${chip('condition', ex.conditions)}${chip('hazard', ex.safety_hazards, 'hazard')}
+        ${!ex.components.length && !ex.symptoms.length && !ex.safety_hazards.length ? '<span class="muted">No parts or symptoms named. Saved as a general note on this machine.</span>' : ''}
       </div></div>
-      <div class="res-sec"><h4>Who was alerted</h4>
-        ${out.routed.length ? out.routed.map((r) => `<div class="route">${icon(r.to === 'CAT Engineering' ? 'wrench' : 'alert')}<div><b>${esc(r.to)}</b><div class="muted" style="font-size:13px">${esc(r.detail || '')}</div></div></div>`).join('') : '<div class="muted">No alert needed — saved to the machine\'s memory.</div>'}
+      <div class="res-sec"><h4>Who's been told</h4>
+        ${out.routed.length ? out.routed.map((r) => `<div class="route">${icon(r.to === 'CAT Engineering' ? 'wrench' : 'alert')}<div><b>${esc(r.to)}</b><div class="muted" style="font-size:13px">${esc(r.detail || '')}</div></div></div>`).join('') : '<div class="route"><span></span><div class="muted">Nobody. It’s low priority, so it went on the machine’s record without paging anyone.</div></div>'}
       </div>
-      ${out.actions.length ? `<div class="res-sec"><h4>Action items created</h4>${out.actions.map((a) => `<div class="act"><span class="who">${esc(ROLE[a.assignee_role] || a.assignee_role)}</span><span>${esc(a.text)}</span></div>`).join('')}</div>` : ''}
-      ${fix ? `<div class="res-sec"><h4>Memory: what fixed this before</h4><div class="fix-card">
+      ${out.actions.length ? `<div class="res-sec"><h4>Tasks created</h4>${out.actions.map((a) => `<div class="act"><span class="who">${esc(ROLE[a.assignee_role] || a.assignee_role)}</span><span>${esc(a.text)}</span></div>`).join('')}</div>` : ''}
+      ${fix ? `<div class="res-sec"><h4>What fixed this before</h4><div class="fix-card">
         <b>${esc(fix.title)}</b>
         ${fix.steps ? `<div class="muted" style="font-size:13px;margin-top:4px">${esc(fix.steps)}</div>` : ''}
         <div class="conf"><i style="width:${fix.confidence}%"></i></div>
-        <div class="row spread" style="margin-top:6px;font-size:13px"><span class="muted" id="fixStat">${fix.confidence}% field success · worked ${fix.success}× / failed ${fix.fail}×</span></div>
-        <div class="row" style="margin-top:8px"><span class="muted" style="font-size:13px">Tried it?</span><button class="btn sm" data-fb="1">${icon('thumbUp')} Worked</button><button class="btn sm" data-fb="0">${icon('thumbDown')} Didn't</button></div>
+        <div class="muted" style="font-size:13px;margin-top:6px" id="fixStat">Worked ${fix.success} of ${fix.success + fix.fail} times on ${esc(out.asset.model)} machines.</div>
+        <div class="row wrap" style="margin-top:10px"><span class="muted" style="font-size:13px">Tried it?</span><button class="btn sm" data-fb="1">${icon('thumbUp')} It worked</button><button class="btn sm" data-fb="0">${icon('thumbDown')} It didn’t</button></div>
       </div></div>` : ''}
-      ${out.similar.length ? `<div class="res-sec"><h4>Similar events in fleet memory</h4>${out.similar.slice(0, 3).map((s) => `<div class="sim"><div class="row spread"><b>${esc(s.asset_id)}</b><span class="faint" style="font-size:12px">${ago(s.created_at)}</span></div><div>${esc(s.summary)}</div><div class="faint" style="font-size:12px;margin-top:2px">match: ${esc(s.reasons.slice(0, 4).join(' · '))}</div></div>`).join('')}</div>` : ''}
-      <div class="res-sec graph-note">${icon('graph')}<span>Knowledge graph updated: <b>+${out.graph.newNodes}</b> nodes, <b>+${out.graph.newEdges}</b> links, <b>${out.graph.reinforced}</b> memories reinforced.</span></div>
-      <button class="btn block lg" style="margin-top:14px" id="newReport">${icon('mic')} New report</button>`;
+      ${out.similar.length ? `<div class="res-sec"><h4>Seen before</h4>${out.similar.slice(0, 3).map((s) => `<div class="sim"><div class="row spread"><span class="id">${esc(s.asset_id)}</span><span class="faint mono" style="font-size:12px">${dateShort(s.created_at)}</span></div><div>${esc(s.summary)}</div><div class="faint" style="font-size:12px;margin-top:2px">matched on ${esc(s.reasons.slice(0, 4).join(', '))}</div></div>`).join('')}</div>` : ''}
+      <div class="graph-note">${icon('graph')}<span>Added to the record: ${out.graph.newNodes} new ${out.graph.newNodes === 1 ? 'fact' : 'facts'}, ${out.graph.newEdges} new links, ${out.graph.reinforced} existing ones confirmed.</span></div>
+      <button class="btn block lg" style="margin-top:14px" id="newReport">${icon('mic')} Report something else</button>`;
     box.classList.remove('hidden');
     box.scrollIntoView({ behavior: 'smooth', block: 'start' });
     box.querySelectorAll('[data-fb]').forEach((b) => b.onclick = async () => {
       try {
         const r = await api(`/api/fixes/${fix.id}/feedback`, { body: { worked: b.dataset.fb === '1', assetId: out.asset.id, reportId: out.report.id, personId: state.me?.id } });
-        box.querySelector('#fixStat').textContent = `${r.fix.confidence}% field success · worked ${r.fix.success}× / failed ${r.fix.fail}× — thanks, memory updated`;
+        box.querySelector('#fixStat').textContent = `Now worked ${r.fix.success} of ${r.fix.success + r.fix.fail} times. Thanks — the next crew will see your result.`;
         box.querySelectorAll('[data-fb]').forEach((x) => { x.disabled = true; });
-        toast('Feedback saved — future recommendations will use it.', 'good');
+        toast('Saved. This changes how the fix is ranked for everyone.', 'good');
       } catch (err) { toast(esc(err.message), 'high'); }
     });
     box.querySelector('#newReport').onclick = () => { box.classList.add('hidden'); $('reportBox').scrollIntoView({ behavior: 'smooth' }); };
@@ -419,14 +441,15 @@
   let feedAlerts = [];
   async function loadFeed() {
     if (!state.unit) return;
-    $('feedTitle').textContent = `Live alerts · ${state.unit.asset.site_name}`;
+    $('feedTitle').textContent = `Alerts at ${state.unit.asset.site_name}`;
+    $('feed').innerHTML = skeleton(2, 'block');
     try { feedAlerts = await api(`/api/alerts?site=${encodeURIComponent(state.unit.asset.site_id)}`); renderFeed(); } catch { /* keep old */ }
   }
   function renderFeed(flashId) {
     $('feedCount').textContent = feedAlerts.length ? `${feedAlerts.length} open` : '';
     $('feed').innerHTML = feedAlerts.length
-      ? feedAlerts.slice(0, 8).map((a) => `<div class="alert-card ${esc(a.kind === 'bulletin' || a.kind === 'agent' ? a.kind : a.severity)} ${a.id === flashId ? 'flash' : ''}"><div class="row spread"><span class="t">${esc(a.title)}</span><span class="faint" style="font-size:12px;white-space:nowrap">${ago(a.created_at)}</span></div>${a.body ? `<div class="b">${esc(a.body.length > 180 ? a.body.slice(0, 179) + '…' : a.body)}</div>` : ''}</div>`).join('')
-      : '<div class="empty">No open alerts on this site. ✓</div>';
+      ? feedAlerts.slice(0, 8).map((a) => `<div class="alert-card ${esc(a.kind === 'bulletin' || a.kind === 'agent' ? a.kind : a.severity)} ${a.id === flashId ? 'flash' : ''}"><div class="row spread" style="align-items:flex-start"><span class="t">${esc(a.title)}</span><span class="faint mono" style="font-size:11px;white-space:nowrap">${ago(a.created_at)}</span></div>${a.body ? `<div class="b">${esc(a.body.length > 180 ? a.body.slice(0, 179) + '…' : a.body)}</div>` : ''}</div>`).join('')
+      : emptyState({ icon: 'shield', title: `Nothing open at ${esc(state.unit.asset.site_name)}`, body: 'When anyone on this site reports a problem, it shows up here within a second, and your phone buzzes.' });
   }
 
   connectStream({
@@ -453,5 +476,5 @@
   updateSubmit();
   loadPeople().catch(() => toast('Could not load crew list', 'high'));
   const qs = new URLSearchParams(location.search).get('unit');
-  if (qs) { unitInput.value = qs.toUpperCase(); loadUnit(qs, { quiet: true }); }
+  if (qs) { unitInput.value = qs.toUpperCase(); loadUnit(qs, { quiet: true }); } else renderNoUnit();
 })();

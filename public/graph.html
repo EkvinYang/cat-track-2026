@@ -6,25 +6,28 @@
   <title>Knowledge Graph</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700&family=Barlow+Condensed:wght@600;700;800&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700&family=Barlow+Condensed:wght@600;700;800&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/css/app.css">
   <style>
     body { height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
     .wrap { flex: 1; display: grid; grid-template-columns: 290px 1fr; min-height: 0; }
-    .side { border-right: 1px solid var(--line); padding: 16px; overflow-y: auto; background: var(--panel); }
-    .side h1 { font-size: 24px; }
-    .stat-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 12px 0; }
-    .legend label { display: flex; align-items: center; gap: 9px; padding: 6px 8px; border-radius: 8px; cursor: pointer; font-size: 14px; }
-    .legend label:hover { background: var(--panel-2); }
-    .legend .sw { width: 13px; height: 13px; border-radius: 4px; flex: none; }
+    .side { border-right: 1px solid var(--line); padding: 18px; overflow-y: auto; background: var(--s1); }
+    .side h1 { font-size: 30px; }
+    .stat-row { display: flex; gap: 22px; margin: 16px 0; padding: 12px 0; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+    .stat-row .v { font-weight: 600; font-size: 24px; line-height: 1; }
+    .stat-row .k { font-size: 13px; color: var(--muted); margin-top: 4px; }
+    .lg-group { font-family: var(--f-mono); font-size: 10px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); margin: 12px 0 2px; }
+    .legend label { display: flex; align-items: center; gap: 9px; padding: 5px 4px; border-radius: 3px; cursor: pointer; font-size: 14px; }
+    .legend label:hover { background: var(--s2); }
+    .legend .sw { width: 14px; height: 14px; flex: none; }
     .legend .n { margin-left: auto; color: var(--faint); font-size: 12px; }
     .legend input { accent-color: var(--yellow); }
-    #net { position: relative; min-height: 0; background: radial-gradient(ellipse at center, #14161a 0%, #0c0d0f 70%); }
-    .drawer { position: absolute; top: 14px; right: 14px; bottom: 14px; width: min(360px, calc(100% - 28px)); background: rgba(21,23,26,.97); border: 1px solid var(--line); border-radius: 14px; padding: 16px; overflow-y: auto; box-shadow: var(--shadow); z-index: 5; }
-    .drawer .lk { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 8px; cursor: pointer; font-size: 14px; }
-    .drawer .lk:hover { background: var(--panel-2); }
-    .drawer .et { font-size: 11px; font-weight: 800; letter-spacing: .06em; color: var(--muted); text-transform: uppercase; min-width: 104px; }
-    .growth { position: absolute; left: 14px; bottom: 14px; z-index: 4; background: rgba(21,23,26,.92); border: 1px solid var(--line); border-radius: 12px; padding: 10px 14px; font-size: 13px; max-width: 360px; }
+    #net { position: relative; min-height: 0; background: var(--bg); }
+    .drawer { position: absolute; top: 14px; right: 14px; bottom: 14px; width: min(360px, calc(100% - 28px)); background: var(--s1); border: 1px solid var(--line-strong); border-top: 4px solid var(--cat); border-radius: var(--r); padding: 16px; overflow-y: auto; z-index: 5; }
+    .drawer .lk { display: flex; align-items: center; gap: 8px; padding: 6px 4px; border-radius: 3px; cursor: pointer; font-size: 14px; }
+    .drawer .lk:hover { background: var(--s2); }
+    .drawer .et { font-family: var(--f-mono); font-size: 10px; letter-spacing: .06em; color: var(--muted); text-transform: uppercase; min-width: 108px; }
+    .growth { position: absolute; left: 14px; bottom: 14px; z-index: 4; background: var(--s1); border: 1px solid var(--line-strong); border-left: 4px solid var(--cat); border-radius: 4px; padding: 10px 14px; font-size: 13px; max-width: 360px; }
     .loading { position: absolute; inset: 0; display: grid; place-items: center; color: var(--muted); z-index: 3; pointer-events: none; }
     @media (max-width: 860px) { .wrap { grid-template-columns: 1fr; grid-template-rows: auto 1fr; } .side { max-height: 38vh; border-right: none; border-bottom: 1px solid var(--line); } }
   </style>
@@ -33,20 +36,21 @@
   <div id="top"></div>
   <div class="wrap">
     <aside class="side">
-      <h1>Knowledge Graph</h1>
-      <p class="muted" style="font-size:14px;margin:6px 0 0">Every report, machine, part, symptom, condition and fix — connected. Links get stronger every time the fleet sees them again.</p>
-      <div class="stat-row"><div class="kpi"><div class="v" id="stN">–</div><div class="k">Nodes</div></div><div class="kpi"><div class="v" id="stE">–</div><div class="k">Links</div></div></div>
-      <input class="input" id="search" placeholder="Find a node (EX-0412, Leak, CID 110…)" autocomplete="off">
+      <div class="label">The record, drawn out</div>
+      <h1 style="margin-top:6px">How it all connects</h1>
+      <p class="muted" style="font-size:14px;margin-top:8px">Each report ties a machine to the parts, symptoms and conditions it mentioned. A link thickens every time the same thing is seen again, so the heavy lines are what the fleet keeps repeating.</p>
+      <div class="stat-row"><div><div class="v" id="stN">–</div><div class="k">facts</div></div><div><div class="v" id="stE">–</div><div class="k">links between them</div></div></div>
+      <input class="input" id="search" placeholder="Find EX-0412, Leak, CID 110…" autocomplete="off" aria-label="Find a node">
       <div class="row wrap" style="margin:12px 0">
         <label class="switch"><input type="checkbox" id="physics" checked><span class="track"></span>Live layout</label>
         <button class="btn sm" id="fitBtn">Fit view</button>
       </div>
-      <h3 style="font-size:12px;letter-spacing:.1em;color:var(--muted);text-transform:uppercase;margin:6px 0">Layers</h3>
+      <div class="label" style="margin-top:6px">Show</div>
       <div class="legend" id="legend"></div>
     </aside>
     <div id="net">
       <div id="netCanvas" style="position:absolute;inset:0"></div>
-      <div class="loading" id="loading">Loading memory graph…</div>
+      <div class="loading" id="loading"><div style="text-align:left"><span class="sk line" style="width:220px"></span><span class="sk line" style="width:160px"></span><div class="muted" style="font-size:13px;margin-top:10px">Laying out the record…</div></div></div>
       <div class="growth hidden" id="growth"></div>
       <div class="drawer hidden" id="drawer"></div>
     </div>

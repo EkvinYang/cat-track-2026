@@ -4,20 +4,29 @@
   const $ = (id) => document.getElementById(id);
   document.getElementById('top').innerHTML = topbar('/graph');
 
+  // Four hue groups (validated for colour-blind separation on this surface) + neutral grey.
+  // Machines carry the brand yellow; shape tells types apart inside a group.
+  const C = { fleet: '#ffcd11', problem: '#d95926', part: '#3987e5', learned: '#199e70', record: '#8a8f96', report: '#5d6269' };
   const TYPES = {
-    site: { label: 'Job sites', color: '#ffcd11', shape: 'square', size: 18 },
-    asset: { label: 'Machines', color: '#ffcd11', shape: 'dot', size: 15 },
-    model: { label: 'Models', color: '#f1f2f3', shape: 'diamond', size: 13 },
-    case: { label: 'Engineering cases', color: '#e879f9', shape: 'star', size: 15 },
-    component: { label: 'Components', color: '#ff8a1f', shape: 'dot', size: 10 },
-    symptom: { label: 'Symptoms', color: '#ff4d4f', shape: 'triangle', size: 10 },
-    code: { label: 'Fault codes', color: '#b48cff', shape: 'box', size: 12 },
-    condition: { label: 'Conditions', color: '#5aa9ff', shape: 'hexagon', size: 10 },
-    hazard: { label: 'Safety hazards', color: '#ff6b6b', shape: 'triangleDown', size: 11 },
-    fix: { label: 'Fixes', color: '#2dd4bf', shape: 'square', size: 8 },
-    person: { label: 'People', color: '#3ecf8e', shape: 'dot', size: 7 },
-    report: { label: 'Reports & events', color: '#7b838c', shape: 'dot', size: 4 },
+    site: { label: 'Job sites', group: 'Machines', color: C.fleet, shape: 'square', size: 18 },
+    asset: { label: 'Machines', group: 'Machines', color: C.fleet, shape: 'dot', size: 15 },
+    model: { label: 'Models', group: 'Machines', color: C.fleet, shape: 'diamond', size: 13 },
+    symptom: { label: 'Symptoms', group: 'What went wrong', color: C.problem, shape: 'triangle', size: 10 },
+    code: { label: 'Fault codes', group: 'What went wrong', color: C.problem, shape: 'box', size: 12 },
+    hazard: { label: 'Safety hazards', group: 'What went wrong', color: C.problem, shape: 'triangleDown', size: 11 },
+    component: { label: 'Parts', group: 'Where and when', color: C.part, shape: 'dot', size: 10 },
+    condition: { label: 'Conditions', group: 'Where and when', color: C.part, shape: 'hexagon', size: 10 },
+    case: { label: 'Engineering cases', group: 'What was learned', color: C.learned, shape: 'star', size: 15 },
+    fix: { label: 'Fixes', group: 'What was learned', color: C.learned, shape: 'square', size: 8 },
+    person: { label: 'People', group: 'Who and what', color: C.record, shape: 'dot', size: 7 },
+    report: { label: 'Reports', group: 'Who and what', color: C.report, shape: 'dot', size: 4 },
   };
+  const SHAPE_SVG = {
+    dot: '<circle cx="7" cy="7" r="5.5"/>', square: '<rect x="1.5" y="1.5" width="11" height="11"/>', diamond: '<polygon points="7,0.5 13.5,7 7,13.5 0.5,7"/>',
+    triangle: '<polygon points="7,1 13.5,13 0.5,13"/>', triangleDown: '<polygon points="0.5,1 13.5,1 7,13"/>', box: '<rect x="0.5" y="3" width="13" height="8" rx="1.5"/>',
+    hexagon: '<polygon points="3.5,1 10.5,1 13.5,7 10.5,13 3.5,13 0.5,7"/>', star: '<polygon points="7,0.5 8.8,5 13.5,5.2 9.8,8.2 11,13 7,10.3 3,13 4.2,8.2 0.5,5.2 5.2,5"/>',
+  };
+  const swatch = (t) => `<svg class="sw" viewBox="0 0 14 14" aria-hidden="true" style="fill:${t.color}">${SHAPE_SVG[t.shape]}</svg>`;
   const visible = Object.fromEntries(Object.keys(TYPES).map((t) => [t, true]));
   const counts = {};
 
@@ -35,7 +44,7 @@
       title: `${t.label.replace(/s$/, '')}: ${n.label}${n.weight > 1 ? ` (seen ${n.weight}×)` : ''}`,
       shape: t.shape, size: t.size + (n.type === 'report' ? 0 : grow),
       color: { background: t.color, border: t.color, highlight: { background: '#ffffff', border: t.color }, hover: { background: t.color, border: '#ffffff' } },
-      font: { color: n.type === 'code' ? '#1a0f2e' : '#d9dde1', size: n.type === 'asset' || n.type === 'site' ? 15 : 12, face: 'Barlow', strokeWidth: n.type === 'code' ? 0 : 3, strokeColor: '#0c0d0f' },
+      font: { color: n.type === 'code' ? '#ffffff' : '#d9d7d0', size: n.type === 'asset' || n.type === 'site' ? 15 : 12, face: n.type === 'asset' || n.type === 'code' ? 'IBM Plex Mono' : 'Barlow', strokeWidth: n.type === 'code' ? 0 : 3, strokeColor: '#0f1012' },
       borderWidth: 1,
     };
   }
@@ -58,7 +67,12 @@
     for (const k of Object.keys(TYPES)) counts[k] = 0;
     nodes.forEach((n) => { counts[n.ctType] = (counts[n.ctType] || 0) + 1; });
     $('stN').textContent = nodes.length; $('stE').textContent = edges.length;
-    $('legend').innerHTML = Object.entries(TYPES).map(([k, t]) => `<label><input type="checkbox" data-t="${k}" ${visible[k] ? 'checked' : ''}><span class="sw" style="background:${t.color}"></span>${t.label}<span class="n">${counts[k] || 0}</span></label>`).join('');
+    let lastGroup = '';
+    $('legend').innerHTML = Object.entries(TYPES).map(([k, t]) => {
+      const head = t.group !== lastGroup ? `<div class="lg-group">${t.group}</div>` : '';
+      lastGroup = t.group;
+      return `${head}<label><input type="checkbox" data-t="${k}" ${visible[k] ? 'checked' : ''}>${swatch(t)}${t.label}<span class="n">${counts[k] || 0}</span></label>`;
+    }).join('');
     $('legend').querySelectorAll('[data-t]').forEach((c) => c.onchange = () => { visible[c.dataset.t] = c.checked; nodeView.refresh(); });
   }
 
@@ -67,7 +81,7 @@
     nodes.add(g.nodes.map(styleNode));
     edges.add(g.edges.map(styleEdge));
     recount();
-    if (!g.nodes.length) $('loading').textContent = 'No memory yet — submit a report from the operator panel.';
+    if (!g.nodes.length) { $('loading').innerHTML = CT.emptyState({ icon: 'graph', title: 'The record is empty', body: 'Send a report from the <a href="/operator">operator screen</a> and the first machine, part and symptom will appear here.' }); $('loading').style.pointerEvents = 'auto'; return; }
     await createNetwork();
   }
 
@@ -80,13 +94,13 @@
     for (const l of d.links) (groups[l.type] ||= []).push(l);
     const r = d.report;
     $('drawer').innerHTML = `
-      <div class="row spread"><span class="pill" style="background:${t.color}22;color:${t.color};border-color:${t.color}66">${esc(t.label.replace(/s$/, ''))}</span><button class="btn sm ghost" id="closeDrawer">${icon('x')}</button></div>
-      <h2 style="font-size:24px;margin-top:8px">${esc(r ? r.summary : d.node.label)}</h2>
-      <div class="muted" style="font-size:13px;margin-top:2px">seen ${d.node.weight}× · first ${ago(d.node.created_at)}</div>
-      ${d.node.type === 'asset' ? `<a class="btn sm primary" style="margin-top:10px" href="/asset?id=${encodeURIComponent(d.node.label)}">Open machine memory ${icon('arrow')}</a>` : ''}
-      ${d.node.type === 'case' ? `<a class="btn sm primary" style="margin-top:10px" href="/engineering?case=${d.node.props.caseId}">Open in CAT Engineering ${icon('arrow')}</a>` : ''}
-      ${r ? `<div class="card" style="margin-top:12px"><div class="row wrap" style="gap:6px">${sevPill(r.severity)}<span class="pill sev-info">${esc(r.category)}</span><span class="faint" style="font-size:12px">${esc(r.asset_id)} · ${ago(r.created_at)}</span></div><div style="margin-top:8px">"${esc(r.raw_text)}"</div><div class="faint" style="font-size:12px;margin-top:6px">${esc(r.person_name || r.source)}</div></div>` : ''}
-      <div style="margin-top:14px">${Object.entries(groups).map(([type, ls]) => `<div style="margin-bottom:8px">${ls.slice(0, 14).map((l) => `<div class="lk" data-go="${esc(l.other.id)}"><span class="et">${l.direction === 'in' ? '← ' : ''}${esc(type.replace(/_/g, ' '))}</span><span class="sw" style="width:9px;height:9px;border-radius:3px;background:${(TYPES[l.other.type] || TYPES.report).color}"></span><span class="grow" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(l.other.label)}</span>${l.weight > 1 ? `<span class="faint" style="font-size:12px">×${l.weight}</span>` : ''}</div>`).join('')}${ls.length > 14 ? `<div class="faint" style="font-size:12px;padding-left:8px">+${ls.length - 14} more</div>` : ''}</div>`).join('')}</div>`;
+      <div class="row spread"><span class="row" style="gap:7px">${swatch(t)}<span class="label">${esc(t.label.replace(/s$/, ''))}</span></span><button class="btn sm ghost" id="closeDrawer" aria-label="Close">${icon('x')}</button></div>
+      <h2 style="font-family:var(--f-display);font-weight:700;font-size:28px;line-height:1.05;margin-top:10px">${esc(r ? r.summary : d.node.label)}</h2>
+      <div class="muted mono" style="font-size:12px;margin-top:6px">seen ${d.node.weight} time${d.node.weight === 1 ? '' : 's'} · first ${ago(d.node.created_at)}</div>
+      ${d.node.type === 'asset' ? `<a class="btn sm primary" style="margin-top:12px" href="/asset?id=${encodeURIComponent(d.node.label)}">Full history ${icon('arrow')}</a>` : ''}
+      ${d.node.type === 'case' ? `<a class="btn sm primary" style="margin-top:12px" href="/engineering?case=${d.node.props.caseId}">Open the case ${icon('arrow')}</a>` : ''}
+      ${r ? `<div class="card" style="margin-top:12px"><div class="row wrap" style="gap:6px">${sevPill(r.severity)}<span class="tag">${esc(r.category)}</span><span class="faint mono" style="font-size:11px">${esc(r.asset_id)} · ${ago(r.created_at)}</span></div><div style="margin-top:8px">“${esc(r.raw_text)}”</div><div class="faint" style="font-size:12px;margin-top:6px">${esc(r.person_name || r.source)}</div></div>` : ''}
+      <div style="margin-top:14px">${Object.entries(groups).map(([type, ls]) => `<div style="margin-bottom:8px">${ls.slice(0, 14).map((l) => `<div class="lk" data-go="${esc(l.other.id)}"><span class="et">${l.direction === 'in' ? '← ' : ''}${esc(type.replace(/_/g, ' '))}</span>${swatch(TYPES[l.other.type] || TYPES.report).replace('class="sw"', 'class="sw" style="width:10px;height:10px;fill:' + (TYPES[l.other.type] || TYPES.report).color + '"')}<span class="grow" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(l.other.label)}</span>${l.weight > 1 ? `<span class="faint" style="font-size:12px">×${l.weight}</span>` : ''}</div>`).join('')}${ls.length > 14 ? `<div class="faint" style="font-size:12px;padding-left:8px">+${ls.length - 14} more</div>` : ''}</div>`).join('')}</div>`;
     $('drawer').classList.remove('hidden');
     $('closeDrawer').onclick = () => { $('drawer').classList.add('hidden'); network.unselectAll(); };
     $('drawer').querySelectorAll('[data-go]').forEach((el) => el.onclick = () => focusNode(el.dataset.go));
@@ -135,14 +149,14 @@
     setTimeout(() => { for (const id of flash) { const n = nodes.get(id); if (n) nodes.update({ id, borderWidth: 1, color: { ...n.color, border: n.color.background } }); } }, 2600);
     recount();
     $('loading').classList.add('hidden');
-    $('growth').innerHTML = `${icon('graph')} Memory grew: <b>+${added}</b> nodes, <b>+${linked}</b> links, <b>${reinforced}</b> reinforced`;
+    $('growth').innerHTML = `New report filed: <b>${added}</b> new ${added === 1 ? 'fact' : 'facts'}, <b>${linked}</b> new links, <b>${reinforced}</b> existing ones confirmed.`;
     $('growth').classList.remove('hidden');
     clearTimeout(growthTimer); growthTimer = setTimeout(() => $('growth').classList.add('hidden'), 6000);
   }
 
   connectStream({
     graph: applyDelta,
-    report: ({ report }) => toast(`${icon('mic')} New memory: <b>${esc(report.asset_id)}</b> · ${esc(report.summary)}`),
+    report: ({ report }) => toast(`<span class="id">${esc(report.asset_id)}</span> · ${esc(report.summary)}`),
   }, $('live'));
 
   load().then(() => {

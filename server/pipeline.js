@@ -163,14 +163,14 @@ export async function ingestReport(input) {
       for (const a of ex.action_items || []) if (a.assignee_role) roles.add(a.assignee_role);
       const audience = [...roles];
       recipients = recipientsFor(asset.site_id, audience).filter((p) => p.id !== person?.id);
-      const body = [ex.operator_guidance, fixes[0] ? `Memory: "${fixes[0].title}" fixed this ${fixes[0].success}× before (${fixes[0].confidence}% success).` : '', engCase ? `Escalated to CAT Engineering — case #${engCase.id} (${engCase.occurrences} fleet reports).` : '']
+      const body = [ex.operator_guidance, fixes[0] ? `What worked before: ${fixes[0].title} (${fixes[0].success} of ${fixes[0].success + fixes[0].fail} times).` : '', engCase ? `Sent to CAT Engineering as case #${engCase.id}, now ${engCase.occurrences} report${engCase.occurrences === 1 ? '' : 's'} across the fleet.` : '']
         .filter(Boolean).join(' ');
       const ar = q.run(`INSERT INTO alerts (site_id, asset_id, report_id, case_id, kind, severity, title, body, audience, status, created_at, updated_at)
                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?, ?)`,
         asset.site_id, asset.id, reportId, engCase?.id, kind, ex.severity, `${asset.id} · ${ex.summary}`, body, audience, createdAt, createdAt);
       alert = alertRow(q.get('SELECT * FROM alerts WHERE id = ?', Number(ar.lastInsertRowid)));
       const items = [...(ex.action_items || [])];
-      if (fixes[0] && fixes[0].confidence >= 50) items.push({ assignee_role: 'technician', text: `Try known fix: ${fixes[0].title} (${fixes[0].confidence}% field success)` });
+      if (fixes[0] && fixes[0].confidence >= 50) items.push({ assignee_role: 'technician', text: `Try what worked before: ${fixes[0].title} (worked ${fixes[0].success} of ${fixes[0].success + fixes[0].fail} times)` });
       for (const it of items.slice(0, 7)) {
         const r = q.run(`INSERT INTO action_items (alert_id, site_id, asset_id, text, assignee_role, status, created_at) VALUES (?, ?, ?, ?, ?, 'open', ?)`,
           alert.id, asset.site_id, asset.id, it.text, it.assignee_role || 'site_manager', createdAt);
