@@ -6,11 +6,20 @@
   <title>Site map · Cat Track</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700&family=Barlow+Condensed:wght@600;700;800&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700&family=Barlow+Condensed:wght@600;700;800&family=IBM+Plex+Mono:wght@400;500&family=Inter:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/css/app.css">
+  <link rel="stylesheet" href="/css/kgraph.css">
   <style>
     body { height: 100vh; height: 100dvh; display: flex; flex-direction: column; overflow: hidden; }
     .wrap { flex: 1; display: grid; grid-template-columns: 300px minmax(0, 1fr); min-height: 0; }
+    .views { display: flex; align-items: stretch; gap: 0; padding: 0 16px; border-bottom: 1px solid var(--line); background: var(--s1); flex: none; }
+    .views button { position: relative; border: 0; background: transparent; padding: 10px 2px; margin-right: 22px; font-weight: 600; font-size: 14px; color: var(--muted); cursor: pointer; border-bottom: 3px solid transparent; margin-bottom: -1px; display: inline-flex; align-items: center; gap: 8px; }
+    .views button.on { color: var(--ink); border-bottom-color: var(--cat); }
+    .views button svg { width: 15px; height: 15px; }
+    .views .hint { margin-left: auto; align-self: center; font-size: 12px; color: var(--faint); }
+    body.view-memory .wrap { display: none; }
+    body:not(.view-memory) #kgView { display: none; }
+    @media (max-width: 600px) { .views .hint { display: none; } }
     /* filters + live feed */
     .side { border-right: 1px solid var(--line); padding: 14px 16px 24px; overflow-y: auto; background: var(--s1); }
     .sumline { display: flex; gap: 18px; padding: 2px 0 12px; }
@@ -80,7 +89,8 @@
     .side-btn { display: none; }
     .key { position: absolute; left: 12px; bottom: 12px; z-index: 4; display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center; max-width: calc(100% - 24px); padding: 8px 12px; background: rgba(22, 23, 26, .92); border: 1px solid var(--line); border-radius: 4px; font-size: 12px; color: var(--ink-2); }
     .key .sw { display: inline-flex; align-items: center; gap: 6px; }
-    .key .sw i { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+    .key .sw i { width: 10px; height: 10px; border-radius: 50%; display: inline-grid; place-items: center; color: #111; }
+    .key .sw i svg { width: 8px; height: 8px; stroke-width: 3.5; }
     .key .faded i { opacity: .4; }
     .loading, .empty-over { position: absolute; inset: 0; display: grid; place-items: center; z-index: 3; }
     .loading { pointer-events: none; color: var(--muted); }
@@ -130,38 +140,43 @@
 </head>
 <body>
   <div id="top"></div>
+  <div class="views" role="tablist" aria-label="Graph view" data-i18n-attr="aria-label">
+    <button type="button" role="tab" data-view="map" class="on" aria-selected="true"><span id="vMapIc"></span><span data-i18n>Site map</span></button>
+    <button type="button" role="tab" data-view="memory" aria-selected="false"><span id="vMemIc"></span><span data-i18n>Knowledge graph</span></button>
+    <span class="hint" id="viewHint"></span>
+  </div>
   <div class="wrap">
-    <aside class="side" id="side" aria-label="Filters and incoming reports">
+    <aside class="side" id="side" aria-label="Filters and incoming reports" data-i18n-attr="aria-label">
       <div class="sumline" id="sumline"><span class="sk line" style="width:180px"></span></div>
       <div class="side-tabs" role="tablist">
-        <button type="button" role="tab" data-pane="filters" class="on" aria-selected="true">Filters</button>
-        <button type="button" role="tab" data-pane="live" aria-selected="false">Coming in<span class="newdot hidden" id="liveDot" aria-label="new"></span></button>
+        <button type="button" role="tab" data-pane="filters" class="on" aria-selected="true" data-i18n>Filters</button>
+        <button type="button" role="tab" data-pane="live" aria-selected="false"><span data-i18n>Coming in</span><span class="newdot hidden" id="liveDot" aria-label="new" data-i18n-attr="aria-label"></span></button>
       </div>
       <div class="pane" id="paneFilters">
         <section class="fsec">
-          <label class="lbl" for="siteSel"><span>Job site</span></label>
-          <select class="select" id="siteSel"><option value="">All job sites</option></select>
+          <label class="lbl" for="siteSel"><span data-i18n>Job site</span></label>
+          <select class="select" id="siteSel"><option value="" data-i18n>All job sites</option></select>
         </section>
         <section class="fsec">
-          <div class="lbl"><span>When</span></div>
-          <div class="seg" id="timeSeg" role="group" aria-label="Time range"><button type="button" data-d="7">7 days</button><button type="button" data-d="30">30 days</button><button type="button" data-d="90">90 days</button><button type="button" data-d="0">All</button></div>
+          <div class="lbl"><span data-i18n>When</span></div>
+          <div class="seg" id="timeSeg" role="group" aria-label="Time range" data-i18n-attr="aria-label"><button type="button" data-d="7" data-i18n>7 days</button><button type="button" data-d="30" data-i18n>30 days</button><button type="button" data-d="90" data-i18n>90 days</button><button type="button" data-d="0" data-i18n>All</button></div>
         </section>
         <section class="fsec">
-          <div class="lbl"><span>Urgency</span><small>colour</small></div>
+          <div class="lbl"><span data-i18n>Urgency</span><small data-i18n>colour</small></div>
           <div class="urg" id="urgency"></div>
         </section>
         <section class="fsec">
-          <div class="lbl"><span>Type of issue</span><small>icon</small></div>
+          <div class="lbl"><span data-i18n>Type of issue</span><small data-i18n>icon</small></div>
           <div class="facet" id="issues"></div>
         </section>
         <section class="fsec">
-          <label class="switch"><input type="checkbox" id="openOnly"><span class="track"></span>Open issues only</label>
+          <label class="switch"><input type="checkbox" id="openOnly"><span class="track"></span><span data-i18n>Open issues only</span></label>
         </section>
         <details class="fsec more">
-          <summary><span>More on the map</span><span id="moreChev"></span></summary>
+          <summary><span data-i18n>More on the map</span><span id="moreChev"></span></summary>
           <div class="facet" id="layers" style="margin-top:6px"></div>
         </details>
-        <button class="linkbtn" id="resetBtn" type="button">Reset filters</button>
+        <button class="linkbtn" id="resetBtn" type="button" data-i18n>Reset filters</button>
       </div>
       <div class="pane hidden" id="paneLive"><div id="feed"></div></div>
     </aside>
@@ -170,20 +185,25 @@
       <div id="netCanvas"></div>
       <div class="toolbar">
         <button class="btn sm side-btn" id="sideBtn" type="button"></button>
-        <div class="search"><span id="searchIcon"></span><input class="input" id="search" list="nodeList" placeholder="Find a machine, part, code or site" autocomplete="off" aria-label="Find on the map"><datalist id="nodeList"></datalist></div>
-        <div class="zoom"><button type="button" id="zoomOut" aria-label="Zoom out" title="Zoom out"></button><button type="button" id="zoomIn" aria-label="Zoom in" title="Zoom in"></button><button type="button" id="fitBtn" aria-label="Show everything" title="Show everything"></button></div>
-        <label class="switch follow" title="Move to each new report as it arrives"><input type="checkbox" id="follow"><span class="track"></span><span class="txt">Follow new reports</span></label>
+        <div class="search"><span id="searchIcon"></span><input class="input" id="search" list="nodeList" placeholder="Find a machine, part, code or site" autocomplete="off" aria-label="Find on the map" data-i18n-attr="placeholder,aria-label"><datalist id="nodeList"></datalist></div>
+        <div class="zoom"><button type="button" id="zoomOut" aria-label="Zoom out" title="Zoom out" data-i18n-attr="aria-label,title"></button><button type="button" id="zoomIn" aria-label="Zoom in" title="Zoom in" data-i18n-attr="aria-label,title"></button><button type="button" id="fitBtn" aria-label="Show everything" title="Show everything" data-i18n-attr="aria-label,title"></button></div>
+        <label class="switch follow" title="Move to each new report as it arrives" data-i18n-attr="title"><input type="checkbox" id="follow"><span class="track"></span><span class="txt" data-i18n>Follow new reports</span></label>
       </div>
       <div class="site-tags" id="siteTags"></div>
       <div class="key" id="key"></div>
-      <div class="loading" id="loading"><div style="text-align:left;width:220px"><span class="sk line"></span><span class="sk line" style="width:70%"></span><div class="muted" style="font-size:13px;margin-top:10px">Placing reports on the map…</div></div></div>
+      <div class="loading" id="loading"><div style="text-align:left;width:220px"><span class="sk line"></span><span class="sk line" style="width:70%"></span><div class="muted" style="font-size:13px;margin-top:10px" data-i18n>Placing reports on the map…</div></div></div>
       <div class="empty-over hidden" id="emptyOver"></div>
       <div class="banner hidden" id="banner" role="status"></div>
-      <div class="drawer hidden" id="drawer" role="dialog" aria-label="Details"></div>
+      <div class="drawer hidden" id="drawer" role="dialog" aria-label="Details" data-i18n-attr="aria-label"></div>
     </div>
   </div>
+  <div class="kg-view" id="kgView"></div>
   <script src="/vendor/vis-network/vis-network.min.js"></script>
+  <script src="/i18n/es.js"></script>
+  <script src="/i18n/hi.js"></script>
+  <script src="/js/i18n.js"></script>
   <script src="/js/common.js"></script>
+  <script src="/js/kgraph.js"></script>
   <script src="/js/graph.js"></script>
 </body>
 </html>

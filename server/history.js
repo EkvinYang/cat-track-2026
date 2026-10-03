@@ -8,6 +8,7 @@ import { newDelta, nodeId, upsertNode, upsertEdge, relabelNode } from './graph.j
 import { SEVERITIES, ISSUE_TYPES, COMPONENTS, SYMPTOMS, issueClass } from './vocab.js';
 import { hydrateReport, getAsset, recomputeAssetState } from './memory.js';
 import { publish } from './events.js';
+import { translator } from './i18n.js';
 
 const DAY = 86400000;
 const MAX_BATCH = 25;
@@ -132,7 +133,7 @@ export function reportOption(r) {
  * it marked fixed reopens, a field fix learned only from it is forgotten, it leaves its engineering
  * case, its memory facts go, and it comes out of the knowledge graph. All of it is restorable.
  */
-export function deleteReports(ids, { personId = null, reason = '', via = 'manual' } = {}) {
+export function deleteReports(ids, { personId = null, reason = '', via = 'manual', lang = 'en' } = {}) {
   const wanted = [...new Set((Array.isArray(ids) ? ids : [ids]).map(Number).filter((n) => Number.isInteger(n) && n > 0))];
   if (!wanted.length) throw new HttpError(400, 'Pick at least one report to delete.');
   if (wanted.length > MAX_BATCH) throw new HttpError(400, `Delete at most ${MAX_BATCH} reports at a time.`);
@@ -233,18 +234,19 @@ export function deleteReports(ids, { personId = null, reason = '', via = 'manual
   for (const id of assetIds) { const st = recomputeAssetState(id); if (st) publish('asset', { ...getAsset(id), ...st }); }
   publish('report-deleted', { ids: deleted.map((d) => d.id), reports: deleted, by: person?.name || null, via });
   console.log(`[history] deleted report${deleted.length === 1 ? '' : 's'} ${deleted.map((d) => d.id).join(', ')} (${via}${person ? ` by ${person.name}` : ''})`);
-  return { deleted, effects, did: describeDeletion(deleted, effects) };
+  return { deleted, effects, did: describeDeletion(deleted, effects, lang) };
 }
 
 /** Plain-language list of everything a delete changed, for the person who asked for it. */
-function describeDeletion(deleted, effects) {
-  const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
-  const did = deleted.map((r) => ({ kind: 'deleted', text: `Deleted “${clip(r.summary, 90)}”${r.person_name ? `, reported by ${r.person_name}` : ''}.`, reportId: r.id }));
-  for (const a of effects.alertsClosed) did.push({ kind: 'resolved', text: `Closed its alert “${clip(a.title, 80)}”${a.tasks ? ` and ${plural(a.tasks, 'open task')}` : ''}.` });
-  for (const a of effects.alertsReopened) did.push({ kind: 'note', text: `Reopened “${clip(a.title, 80)}”: the repair that closed it is no longer on record.` });
-  for (const f of effects.fixesRemoved) did.push({ kind: 'retracted', text: `Forgot the known fix “${clip(f.title, 80)}” that was learned from it.` });
-  for (const c of effects.cases) did.push({ kind: 'case', text: c.occurrences ? `Took it out of CAT Engineering case #${c.id}, now ${plural(c.occurrences, 'report')}.` : c.removed ? `CAT Engineering case #${c.id} existed only because of this report, so it was removed.` : `CAT Engineering case #${c.id} had no reports left, so it was closed.` });
-  if (effects.graph.edges) did.push({ kind: 'graph', text: `Took ${plural(effects.graph.edges, 'link')} out of the knowledge graph${effects.graph.facts ? `, plus ${plural(effects.graph.facts, 'fact')} nothing else mentioned` : ''}.` });
+function describeDeletion(deleted, effects, lang = 'en') {
+  const tt = translator(lang);
+  const plural = (n, one, many) => (n === 1 ? tt(one, { n }) : tt(many, { n }));
+  const did = deleted.map((r) => ({ kind: 'deleted', text: r.person_name ? tt('Deleted “{summary}”, reported by {name}.', { summary: clip(r.summary, 90), name: r.person_name }) : tt('Deleted “{summary}”.', { summary: clip(r.summary, 90) }), reportId: r.id }));
+  for (const a of effects.alertsClosed) did.push({ kind: 'resolved', text: a.tasks ? tt('Closed its alert “{title}” and {tasks}.', { title: clip(a.title, 80), tasks: plural(a.tasks, '1 open task', '{n} open tasks') }) : tt('Closed its alert “{title}”.', { title: clip(a.title, 80) }) });
+  for (const a of effects.alertsReopened) did.push({ kind: 'note', text: tt('Reopened “{title}”: the repair that closed it is no longer on record.', { title: clip(a.title, 80) }) });
+  for (const f of effects.fixesRemoved) did.push({ kind: 'retracted', text: tt('Forgot the known fix “{title}” that was learned from it.', { title: clip(f.title, 80) }) });
+  for (const c of effects.cases) did.push({ kind: 'case', text: c.occurrences ? tt('Took it out of CAT Engineering case #{id}, now {reports}.', { id: c.id, reports: plural(c.occurrences, '1 report', '{n} reports') }) : c.removed ? tt('CAT Engineering case #{id} existed only because of this report, so it was removed.', { id: c.id }) : tt('CAT Engineering case #{id} had no reports left, so it was closed.', { id: c.id }) });
+  if (effects.graph.edges) did.push({ kind: 'graph', text: effects.graph.facts ? tt('Took {links} out of the knowledge graph, plus {facts} nothing else mentioned.', { links: plural(effects.graph.edges, '1 link', '{n} links'), facts: plural(effects.graph.facts, '1 fact', '{n} facts') }) : tt('Took {links} out of the knowledge graph.', { links: plural(effects.graph.edges, '1 link', '{n} links') }) });
   return did;
 }
 
@@ -459,6 +461,8 @@ export function editReport(id, changes = {}, { personId = null } = {}) {
   Object.assign(next, { summary, severity });
   next.edits = [...(ex.edits || []), { at, by: person?.id || null, by_name: person?.name || null, fields }].slice(-20);
   const relink = fields.includes('part') || fields.includes('problem');
+  // The diagnosis followed the old part, problem or words; flag it so the screens offer to run it again.
+  if (next.diagnosis && (relink || fields.includes('what was said'))) next.diagnosis = { ...next.diagnosis, stale: true };
   const caseIds = q.all('SELECT case_id FROM case_reports WHERE report_id = ?', id).map((c) => c.case_id);
   const delta = newDelta();
   let removed = { nodes: [], edges: [] };

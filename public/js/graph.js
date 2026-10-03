@@ -3,15 +3,35 @@
 // mentions hang off it. Filters for job site, time, urgency, issue type, status and extra layers.
 // "Coming in" shows each report as it is received, then what Cat Track made of it.
 (function () {
-  const { api, esc, ago, dateTime, sevPill, statusPill, toast, connectStream, topbar, icon, emptyState, keyFacts, dropdown, kv, store, clip, problemOf, iconPaths, FAMILY_ICON, SOURCE_LABEL, REPORT_STATUS } = CT;
+  const { api, esc, ago, dateTime, sevPill, statusPill, toast, connectStream, topbar, icon, emptyState, keyFacts, dropdown, kv, store, clip, problemOf, iconPaths, FAMILY_ICON, SOURCE_LABEL, REPORT_STATUS, codeChips, diagnosisBlock, diagnosisCount, t } = CT;
   const $ = (id) => document.getElementById(id);
   $('top').innerHTML = topbar('/graph');
   $('searchIcon').outerHTML = icon('search');
   $('zoomOut').innerHTML = icon('minus');
   $('zoomIn').innerHTML = icon('plus');
   $('fitBtn').innerHTML = icon('fit');
-  $('sideBtn').innerHTML = `${icon('filter')} Filters`;
+  $('sideBtn').innerHTML = `${icon('filter')} ${t('Filters')}`;
   $('moreChev').outerHTML = icon('chevron');
+
+  // Two views of the same record: this site map, and the knowledge graph the way Site Memory draws it.
+  $('vMapIc').outerHTML = icon('pin');
+  $('vMemIc').outerHTML = icon('graph');
+  KGraph.mount($('kgView'));
+  let view = 'map';
+  function showView(name, { remember = true } = {}) {
+    view = name === 'memory' ? 'memory' : 'map';
+    document.body.classList.toggle('view-memory', view === 'memory');
+    document.querySelectorAll('.views [data-view]').forEach((b) => { const on = b.dataset.view === view; b.classList.toggle('on', on); b.setAttribute('aria-selected', String(on)); });
+    $('viewHint').textContent = view === 'memory' ? t('Sites → machines → components → episodes → signatures → fixes → patterns') : t('Reports placed on their machines and job sites');
+    document.title = `${view === 'memory' ? t('Knowledge graph') : t('Site map')} · Cat Track`;
+    if (remember) {
+      store.set('graphView', view);
+      const u = new URL(location.href); if (view === 'memory') u.searchParams.set('view', 'memory'); else u.searchParams.delete('view'); history.replaceState(null, '', u);
+    }
+    if (view === 'memory') KGraph.show();
+    else if (network) setTimeout(() => { network.redraw(); fitView(false); }, 30); // the canvas was hidden, so re-measure it
+  }
+  document.querySelector('.views').addEventListener('click', (e) => { const b = e.target.closest('[data-view]'); if (b) showView(b.dataset.view); });
 
   // Side panel: Filters, or the live list of reports coming in.
   let pane = 'filters';
@@ -43,6 +63,10 @@
     person: { label: 'Person', shape: 'dot', color: '#8a8f96' },
     document: { label: 'Product document', shape: 'diamond', color: '#3987e5' },
   };
+  // Parts, problems, hazards and conditions are vocabulary names, shown in the active language.
+  const VOCAB = new Set(['component', 'symptom', 'hazard', 'condition']);
+  // Reports are named by their part and problem (or hazard) in the screen's language; vocabulary nodes by their name.
+  const nodeName = (n) => (n.type === 'report' ? problemOf({ ...n, hazard: n.hazards?.[0] ?? null }).title : VOCAB.has(n.type) ? t(n.label) : n.label);
   const LAYERS = {
     parts: { label: 'Parts & problems', types: ['component', 'symptom', 'code', 'hazard'], on: true, swatch: '<circle cx="5" cy="9" r="4" fill="#5f6772"/><polygon points="13,4 18,13 8,13" fill="#5f6772"/>' },
     conditions: { label: 'Weather & conditions', types: ['condition'], on: true, swatch: '<polygon points="6,3 14,3 18,9 14,15 6,15 2,9" fill="#5f6772"/>' },
@@ -122,7 +146,7 @@
         id: n.id, ct: n, shape: 'circularImage', image: badgeImage(FAMILY_ICON[n.family] || 'excavator', '#24262b', '#ffcd11'), size: 19, borderWidth: 3, opacity: 1,
         color: { border: MACHINE_RING[n.status] || '#67665f', background: '#24262b', highlight: { border: '#ffffff', background: '#24262b' }, hover: { border: '#ffffff', background: '#24262b' } },
         label: n.label, font: { size: 15, color: '#f3f1ec', face: 'IBM Plex Mono', strokeWidth: 4, strokeColor: BG },
-        title: tip(`${n.label} · ${n.model}`, `${esc(MACHINE_STATUS[n.status] || n.status)} · health ${n.health}/100 · ${n.open_alerts} open`),
+        title: tip(`${n.label} · ${n.model}`, `${esc(t(MACHINE_STATUS[n.status] || n.status))} · ${t('health {h}/100', { h: n.health })} · ${t('{n} open', { n: n.open_alerts })}`),
       };
     }
     if (n.type === 'report') {
@@ -130,16 +154,16 @@
       return {
         id: n.id, ct: n, shape: 'circularImage', image: badgeImage(is.icon, u.color, '#111111'), size: u.size, borderWidth: 2, opacity: baseOpacity(n),
         color: { border: u.color, background: u.color, highlight: { border: '#ffffff', background: u.color }, hover: { border: '#ffffff', background: u.color } },
-        label: clip(n.label, 30), font: { size: 11, color: '#d9d7d0', strokeWidth: 4, strokeColor: BG },
-        title: tip(n.label, `${u.label} · ${esc(is.label)} · ${esc(REPORT_STATUS[n.status] || n.status)}<br>${esc(n.asset_id)} · ${esc(ago(n.created_at))}`),
+        label: clip(nodeName(n), 30), font: { size: 11, color: '#d9d7d0', strokeWidth: 4, strokeColor: BG },
+        title: tip(nodeName(n), `${t(u.label)} · ${esc(t(is.label))} · ${esc(t(REPORT_STATUS[n.status] || n.status))}<br>${esc(n.asset_id)} · ${esc(ago(n.created_at))}`),
       };
     }
-    const t = ENTITY[n.type] || ENTITY.component;
+    const ent = ENTITY[n.type] || ENTITY.component;
     const out = {
-      id: n.id, ct: n, shape: t.shape, size: Math.min(13, 6 + Math.log2((n.weight || 1) + 1) * 1.6), borderWidth: 1, opacity: 1,
-      color: { background: t.color, border: '#80868f', highlight: { background: '#d9d7d0', border: '#ffffff' }, hover: { background: t.color, border: '#ffffff' } },
-      label: clip(n.type === 'case' ? `Case #${n.case_id}` : n.label, 26), font: { size: 11, color: '#a9a79f', strokeWidth: 4, strokeColor: BG },
-      title: tip(n.type === 'case' ? (n.title || n.label) : n.label, esc(t.label)),
+      id: n.id, ct: n, shape: ent.shape, size: Math.min(13, 6 + Math.log2((n.weight || 1) + 1) * 1.6), borderWidth: 1, opacity: 1,
+      color: { background: ent.color, border: '#80868f', highlight: { background: '#d9d7d0', border: '#ffffff' }, hover: { background: ent.color, border: '#ffffff' } },
+      label: clip(n.type === 'case' ? t('Case #{id}', { id: n.case_id }) : nodeName(n), 26), font: { size: 11, color: '#a9a79f', strokeWidth: 4, strokeColor: BG },
+      title: tip(n.type === 'case' ? (n.title || n.label) : nodeName(n), esc(t(ent.label))),
     };
     if (n.type === 'code') Object.assign(out, { font: { size: 10, color: '#f3f1ec', face: 'IBM Plex Mono', strokeWidth: 0 }, margin: 5 });
     return out;
@@ -309,36 +333,36 @@
     $('siteSel').value = f.site;
     $('timeSeg').querySelectorAll('button').forEach((b) => b.classList.toggle('on', Number(b.dataset.d) === f.days));
     $('openOnly').checked = f.openOnly;
-    $('urgency').innerHTML = Object.entries(URGENCY).map(([k, u]) => `<button type="button" class="${f.urgency.has(k) ? '' : 'off'}" data-u="${k}" aria-pressed="${f.urgency.has(k)}"><span class="dot" style="background:${u.color}"></span>${u.label}<span class="n">${count('urgency', (r) => r.severity === k)}</span></button>`).join('');
-    $('issues').innerHTML = Object.entries(ISSUES).map(([k, t]) => `<button type="button" class="${f.issues.has(k) ? 'on' : ''}" data-i="${k}" title="${esc(t.hint)}" aria-pressed="${f.issues.has(k)}"><span class="box">${f.issues.has(k) ? icon('check') : ''}</span><span class="ic">${icon(t.icon)}</span><span class="lab">${esc(t.label)}</span><span class="n">${count('issues', (r) => r.issue === k)}</span></button>`).join('');
-    $('layers').innerHTML = Object.entries(LAYERS).map(([k, l]) => `<button type="button" class="${f.layers.has(k) ? 'on' : ''}" data-l="${k}" aria-pressed="${f.layers.has(k)}"><span class="box">${f.layers.has(k) ? icon('check') : ''}</span><span class="lshape"><svg width="20" height="18" viewBox="0 0 20 18" aria-hidden="true">${l.swatch}</svg></span><span class="lab">${esc(l.label)}</span></button>`).join('');
+    $('urgency').innerHTML = Object.entries(URGENCY).map(([k, u]) => `<button type="button" class="${f.urgency.has(k) ? '' : 'off'}" data-u="${k}" aria-pressed="${f.urgency.has(k)}"><span class="dot" style="background:${u.color}"></span>${t(u.label)}<span class="n">${count('urgency', (r) => r.severity === k)}</span></button>`).join('');
+    $('issues').innerHTML = Object.entries(ISSUES).map(([k, is]) => `<button type="button" class="${f.issues.has(k) ? 'on' : ''}" data-i="${k}" title="${esc(t(is.hint))}" aria-pressed="${f.issues.has(k)}"><span class="box">${f.issues.has(k) ? icon('check') : ''}</span><span class="ic">${icon(is.icon)}</span><span class="lab">${esc(t(is.label))}</span><span class="n">${count('issues', (r) => r.issue === k)}</span></button>`).join('');
+    $('layers').innerHTML = Object.entries(LAYERS).map(([k, l]) => `<button type="button" class="${f.layers.has(k) ? 'on' : ''}" data-l="${k}" aria-pressed="${f.layers.has(k)}"><span class="box">${f.layers.has(k) ? icon('check') : ''}</span><span class="lshape"><svg width="20" height="18" viewBox="0 0 20 18" aria-hidden="true">${l.swatch}</svg></span><span class="lab">${esc(t(l.label))}</span></button>`).join('');
   }
   function renderSummary(reports) {
     const open = reports.filter((r) => r.status === 'open').length;
     const machines = data.view.nodes.filter((n) => n.type === 'asset' && visible.has(n.id)).length;
     const cell = (n, one, many) => `<div><div class="v">${n}</div><div class="k">${n === 1 ? one : many}</div></div>`;
-    $('sumline').innerHTML = cell(reports.length, 'report', 'reports') + cell(open, 'open issue', 'open issues') + cell(machines, 'machine', 'machines');
+    $('sumline').innerHTML = cell(reports.length, t('report'), t('reports')) + cell(open, t('open issue'), t('open issues')) + cell(machines, t('machine'), t('machines'));
   }
   function renderEmpty(reports) {
     const box = $('emptyOver');
     if (reports.length) { box.classList.add('hidden'); return; }
     const anyAtAll = reportsOf().length > 0;
     box.innerHTML = `<div class="panel panel-pad" style="max-width:360px">${anyAtAll
-      ? emptyState({ icon: 'filter', title: 'No reports match these filters', body: 'Job sites and machines are still shown. Widen the time range or turn some urgencies and issue types back on.', action: '<button class="btn sm primary" id="emptyReset">Reset filters</button>' })
-      : emptyState({ icon: 'mic', title: 'Nothing reported yet', body: 'Send a report from the operator screen and it appears here, on its machine.', action: '<a href="/operator">Open the operator screen</a>' })}</div>`;
+      ? emptyState({ icon: 'filter', title: t('No reports match these filters'), body: t('Job sites and machines are still shown. Widen the time range or turn some urgencies and issue types back on.'), action: `<button class="btn sm primary" id="emptyReset">${t('Reset filters')}</button>` })
+      : emptyState({ icon: 'mic', title: t('Nothing reported yet'), body: t('Send a report from the operator screen and it appears here, on its machine.'), action: `<a href="/operator">${t('Open the operator screen')}</a>` })}</div>`;
     box.classList.remove('hidden');
     $('emptyReset')?.addEventListener('click', resetFilters);
   }
   function renderKey() {
-    $('key').innerHTML = `${Object.values(URGENCY).map((u) => `<span class="sw"><i style="background:${u.color}"></i>${u.label}</span>`).join('')}<span class="sw faded"><i style="background:#ec7a2c"></i>faded = closed or done</span><span class="muted">icon = type of issue · zoom in for names</span>`;
+    $('key').innerHTML = `${Object.values(URGENCY).map((u) => `<span class="sw"><i style="background:${u.color}"></i>${t(u.label)}</span>`).join('')}<span class="sw faded"><i style="background:#ec7a2c"></i>${t('faded = closed or done')}</span><span class="muted">${t('icon = type of issue · zoom in for names')}</span>`;
   }
   function renderSearchList() {
     const order = ['site', 'asset', 'component', 'symptom', 'code', 'condition', 'hazard', 'case'];
     const seen = new Set(); const opts = [];
-    for (const t of order) {
+    for (const ty of order) {
       for (const n of data.view.nodes) {
-        if (n.type !== t) continue;
-        const label = n.type === 'asset' ? `${n.label} · ${n.model}` : n.type === 'case' ? `Case #${n.case_id} · ${n.title || n.label}` : n.label;
+        if (n.type !== ty) continue;
+        const label = n.type === 'asset' ? `${n.label} · ${n.model}` : n.type === 'case' ? `${t('Case #{id}', { id: n.case_id })} · ${n.title || n.label}` : nodeName(n);
         if (seen.has(label)) continue;
         seen.add(label); opts.push(label);
       }
@@ -449,7 +473,7 @@
         siteTags.set(id, el);
       }
       const open = reportsOf().filter((r) => r.site_id === siteId && visible.has(r.id) && r.status === 'open').length;
-      el.innerHTML = `${esc(siteName(siteId))}${open ? `<span class="n">${open} open</span>` : ''}`;
+      el.innerHTML = `${esc(siteName(siteId))}${open ? `<span class="n">${t('{n} open', { n: open })}</span>` : ''}`;
       el.hidden = !visible.has(id);
       if (!network) el.style.visibility = 'hidden';
     }
@@ -535,7 +559,7 @@
       applyFilters({ fit: false });
       changed = true;
     }
-    if (changed) toast('Filters widened so it shows on the map.');
+    if (changed) toast(t('Filters widened so it shows on the map.'));
     return changed;
   }
   // Centre on a node; with the details panel open, centre it in the part of the map still showing.
@@ -557,7 +581,7 @@
 
   /* ------------------------------ details drawer ------------------------------ */
   const urgencyDot = (r) => `<i style="background:${(URGENCY[r.severity] || URGENCY.low).color};opacity:${baseOpacity(r)}"></i>`;
-  const reportRows = (list) => list.map((r) => `<button class="rl" data-go="${esc(r.id)}">${urgencyDot(r)}<span>${esc(r.label)}</span><span class="w">${esc(r.asset_id)} · ${esc(ago(r.created_at))}</span></button>`).join('');
+  const reportRows = (list) => list.map((r) => `<button class="rl" data-go="${esc(r.id)}">${urgencyDot(r)}<span>${esc(nodeName(r))}</span><span class="w">${esc(r.asset_id)} · ${esc(ago(r.created_at))}</span></button>`).join('');
   const SEV_ORDER = Object.keys(URGENCY);
   const byUrgency = (a, b) => (b.status === 'open') - (a.status === 'open') || SEV_ORDER.indexOf(a.severity) - SEV_ORDER.indexOf(b.severity) || b.created_at.localeCompare(a.created_at);
   const linkedReports = (id) => [...(data.adj.get(id) || [])].map((x) => data.byId.get(x)).filter((x) => x?.type === 'report' && visible.has(x.id));
@@ -566,51 +590,53 @@
   function showDrawer(id) {
     const n = data.byId.get(id); if (!n) return;
     let html = '';
-    const close = `<button class="btn sm ghost" id="closeDrawer" aria-label="Close details">${icon('x')}</button>`;
+    const close = `<button class="btn sm ghost" id="closeDrawer" aria-label="${esc(t('Close details'))}">${icon('x')}</button>`;
     if (n.type === 'report') {
       const u = URGENCY[n.severity] || URGENCY.low; const is = ISSUES[n.issue] || ISSUES.note;
       const mentions = [...(data.adj.get(id) || [])].map((x) => data.byId.get(x)).filter((x) => x && !['asset', 'report'].includes(x.type));
-      html = `<div class="hd"><span class="ty">${badge(is.icon, u.color)}${esc(is.label)}</span>${close}</div>
-        <h2>${esc(n.label)}</h2>
+      html = `<div class="hd"><span class="ty">${badge(is.icon, u.color)}${esc(t(is.label))}</span>${close}</div>
+        <h2>${esc(nodeName(n))}</h2>
         ${keyFacts([
-          ['Machine', `<button class="linkish" data-go="${esc(assetNode(n.asset_id))}">${esc(n.asset_id)}</button>`],
-          ['Location', esc(siteName(n.site_id))],
-          ['Urgency', sevPill(n.severity)],
-          ['Status', esc(REPORT_STATUS[n.status] || n.status)],
-          ['When', `<span title="${esc(dateTime(n.created_at))}">${esc(ago(n.created_at))}</span>`],
-          ['Reported by', esc(n.person_name || SOURCE_LABEL[n.source] || n.source)],
+          [t('Machine'), `<button class="linkish" data-go="${esc(assetNode(n.asset_id))}">${esc(n.asset_id)}</button>`],
+          [t('Location'), esc(siteName(n.site_id))],
+          [t('Urgency'), sevPill(n.severity)],
+          [t('Status'), esc(t(REPORT_STATUS[n.status] || n.status))],
+          [t('When'), `<span title="${esc(ago(n.created_at))}">${esc(dateTime(n.created_at))}</span>`],
+          [t('Code'), n.codes.length ? `<span class="code-plain" style="color:var(--ink)">${esc(n.codes.join(', '))}</span>` : ''],
+          [t('Reported by'), esc(n.person_name || t(SOURCE_LABEL[n.source] || n.source))],
         ])}
         <div style="margin-top:12px">
-          ${dropdown('What was said', `<q class="said">${esc(n.raw_text)}</q>`)}
-          ${dropdown('Details', kv([['Summary', esc(n.summary)], ['Fault code', esc(n.codes.join(', '))], ['Conditions', esc(n.conditions.join(', '))], ['Hazards', esc(n.hazards.join(', '))], ['What to do', esc(n.guidance)]]))}
-          ${mentions.length ? dropdown('Connected on the map', `<div class="chips">${mentions.map((m) => `<button class="chip" data-go="${esc(m.id)}"><span class="k">${esc((ENTITY[m.type] || {}).label || m.type)}</span>${esc(m.type === 'case' ? `#${m.case_id}` : m.label)}</button>`).join('')}</div>`, { count: mentions.length }) : ''}
+          ${n.diagnosis ? dropdown(t('Diagnosis'), diagnosisBlock(n.diagnosis, { assetId: n.asset_id }), { open: true, count: diagnosisCount(n.diagnosis) }) : ''}
+          ${dropdown(t('What was said'), `<q class="said">${esc(n.raw_text)}</q>`)}
+          ${dropdown(t('Details'), kv([[t('Summary'), esc(n.summary)], [t('Fault code'), codeChips(n.codes, { assetId: n.asset_id })], [t('Conditions'), esc(n.conditions.map((c) => t(c)).join(', '))], [t('Hazards'), esc(n.hazards.map((h) => t(h)).join(', '))], [t('What to do'), esc(n.guidance)]]))}
+          ${mentions.length ? dropdown(t('Connected on the map'), `<div class="chips">${mentions.map((m) => `<button class="chip" data-go="${esc(m.id)}"><span class="k">${esc(t((ENTITY[m.type] || {}).label || m.type))}</span>${esc(m.type === 'case' ? `#${m.case_id}` : nodeName(m))}</button>`).join('')}</div>`, { count: mentions.length }) : ''}
         </div>
-        <div class="btns"><a class="btn sm primary" href="/asset?id=${encodeURIComponent(n.asset_id)}">Machine history ${icon('arrow')}</a><a class="btn sm" href="/reports?asset=${encodeURIComponent(n.asset_id)}">Report log</a></div>`;
+        <div class="btns"><a class="btn sm primary" href="/asset?id=${encodeURIComponent(n.asset_id)}">${t('Machine history')} ${icon('arrow')}</a><a class="btn sm" href="/reports?asset=${encodeURIComponent(n.asset_id)}">${t('Report log')}</a></div>`;
     } else if (n.type === 'asset') {
       const reps = linkedReports(id).sort(byUrgency);
-      html = `<div class="hd"><span class="ty">${badge(FAMILY_ICON[n.family] || 'excavator', '#ffcd11')}Machine</span>${close}</div>
+      html = `<div class="hd"><span class="ty">${badge(FAMILY_ICON[n.family] || 'excavator', '#ffcd11')}${t('Machine')}</span>${close}</div>
         <h2>${esc(n.label)} <span class="muted" style="font-weight:600">${esc(n.model)}</span></h2>
-        ${keyFacts([['Location', esc(siteName(n.site_id))], ['Status', statusPill(n.status)], ['Health', `${n.health}/100`], ['Open issues', String(n.open_alerts)], ['Hours', n.hours.toLocaleString()], ['Operator', esc(n.operator_name || '—')]])}
-        <div style="margin-top:12px">${dropdown('Reports on the map', reps.length ? reportRows(reps) : none('None with the current filters.'), { count: reps.length, open: true })}</div>
-        <div class="btns"><a class="btn sm primary" href="/asset?id=${encodeURIComponent(n.asset_id)}">Full history ${icon('arrow')}</a><a class="btn sm" href="/operator?unit=${encodeURIComponent(n.asset_id)}">Report on it</a></div>`;
+        ${keyFacts([[t('Location'), esc(siteName(n.site_id))], [t('Status'), statusPill(n.status)], [t('Health'), `${n.health}/100`], [t('Open issues'), String(n.open_alerts)], [t('Hours'), n.hours.toLocaleString(CT.locale)], [t('Operator'), esc(n.operator_name || '—')]])}
+        <div style="margin-top:12px">${dropdown(t('Reports on the map'), reps.length ? reportRows(reps) : none(t('None with the current filters.')), { count: reps.length, open: true })}</div>
+        <div class="btns"><a class="btn sm primary" href="/asset?id=${encodeURIComponent(n.asset_id)}">${t('Full history')} ${icon('arrow')}</a><a class="btn sm" href="/operator?unit=${encodeURIComponent(n.asset_id)}">${t('Report on it')}</a></div>`;
     } else if (n.type === 'site') {
       const machines = [...(data.adj.get(id) || [])].filter((x) => data.byId.get(x)?.type === 'asset');
       const reps = machines.flatMap((m) => linkedReports(m));
       const open = reps.filter((r) => r.status === 'open').sort(byUrgency);
-      html = `<div class="hd"><span class="ty">${badge('pin', '#ffcd11')}Job site</span>${close}</div>
+      html = `<div class="hd"><span class="ty">${badge('pin', '#ffcd11')}${t('Job site')}</span>${close}</div>
         <h2>${esc(n.label)}</h2>
-        ${keyFacts([['Location', esc(n.location || '')], ['Climate', esc(n.climate || '')], ['Machines', String(machines.length)], ['Reports', String(reps.length)], ['Open issues', String(open.length)]])}
-        <div style="margin-top:12px">${dropdown('Open issues here', open.length ? reportRows(open) : none('Nothing open with the current filters.'), { count: open.length, open: true })}</div>
-        <div class="btns">${f.site === n.site_id ? '<button class="btn sm" id="allSites">Show all job sites</button>' : '<button class="btn sm primary" id="onlySite">Show only this site</button>'}<a class="btn sm" href="/?site=${encodeURIComponent(n.site_id)}">Dashboard</a></div>`;
+        ${keyFacts([[t('Location'), esc(n.location || '')], [t('Climate'), esc(n.climate || '')], [t('Machines'), String(machines.length)], [t('Reports'), String(reps.length)], [t('Open issues'), String(open.length)]])}
+        <div style="margin-top:12px">${dropdown(t('Open issues here'), open.length ? reportRows(open) : none(t('Nothing open with the current filters.')), { count: open.length, open: true })}</div>
+        <div class="btns">${f.site === n.site_id ? `<button class="btn sm" id="allSites">${t('Show all job sites')}</button>` : `<button class="btn sm primary" id="onlySite">${t('Show only this site')}</button>`}<a class="btn sm" href="/?site=${encodeURIComponent(n.site_id)}">${t('Dashboard')}</a></div>`;
     } else {
-      const t = ENTITY[n.type] || { label: n.type };
+      const ent = ENTITY[n.type] || { label: n.type };
       const reps = linkedReports(id).sort(byUrgency);
       const machines = new Set(reps.map((r) => r.asset_id)); const sites = new Set(reps.map((r) => r.site_id));
-      html = `<div class="hd"><span class="ty">${esc(t.label)}</span>${close}</div>
-        <h2>${esc(n.type === 'case' ? (n.title || n.label) : n.label)}</h2>
-        ${keyFacts([['Reports', String(reps.length)], ['Machines', String(machines.size)], ['Job sites', String(sites.size)], ...(n.type === 'case' ? [['Priority', esc(n.priority || '')], ['Case status', esc((n.case_status || '').replace(/_/g, ' '))]] : []), ...(n.meaning ? [['Means', esc(n.meaning)]] : [])])}
-        <div style="margin-top:12px">${dropdown('Reports that mention it', reps.length ? reportRows(reps) : none('None with the current filters.'), { count: reps.length, open: true })}</div>
-        <div class="btns">${n.type === 'case' && n.case_id ? `<a class="btn sm primary" href="/engineering?case=${n.case_id}">Open the case ${icon('arrow')}</a>` : ''}${n.doc_id ? `<a class="btn sm primary" href="/library?doc=${n.doc_id}">Open the document ${icon('arrow')}</a>` : ''}</div>`;
+      html = `<div class="hd"><span class="ty">${esc(t(ent.label))}</span>${close}</div>
+        <h2>${esc(n.type === 'case' ? (n.title || n.label) : nodeName(n))}</h2>
+        ${keyFacts([[t('Reports'), String(reps.length)], [t('Machines'), String(machines.size)], [t('Job sites'), String(sites.size)], ...(n.type === 'case' ? [[t('Priority'), esc(t(n.priority || ''))], [t('Case status'), esc(t((n.case_status || '').replace(/_/g, ' ')))]] : []), ...(n.meaning ? [[t('Means'), esc(n.meaning)]] : [])])}
+        <div style="margin-top:12px">${dropdown(t('Reports that mention it'), reps.length ? reportRows(reps) : none(t('None with the current filters.')), { count: reps.length, open: true })}</div>
+        <div class="btns">${n.type === 'case' && n.case_id ? `<a class="btn sm primary" href="/engineering?case=${n.case_id}">${t('Open the case')} ${icon('arrow')}</a>` : ''}${n.doc_id ? `<a class="btn sm primary" href="/library?doc=${n.doc_id}">${t('Open the document')} ${icon('arrow')}</a>` : ''}</div>`;
     }
     const d = $('drawer');
     d.innerHTML = html;
@@ -626,7 +652,7 @@
   function find(q) {
     const s = q.trim().toLowerCase(); if (!s) return null;
     const norm = (x) => String(x || '').toLowerCase();
-    const label = (n) => (n.type === 'asset' ? `${n.label} · ${n.model}` : n.type === 'case' ? `Case #${n.case_id} · ${n.title || n.label}` : n.label);
+    const label = (n) => (n.type === 'asset' ? `${n.label} · ${n.model}` : n.type === 'case' ? `${t('Case #{id}', { id: n.case_id })} · ${n.title || n.label}` : nodeName(n));
     const flat = (x) => norm(x).replace(/[^a-z0-9]/g, '');
     const all = data.view.nodes.filter((n) => n.type !== 'report');
     return all.find((n) => norm(label(n)) === s) || all.find((n) => norm(n.label) === s)
@@ -640,7 +666,7 @@
     lastSearch = value;
     setTimeout(() => { lastSearch = ''; }, 600);
     const hit = find(value);
-    if (hit) { focusNode(hit.id); $('search').blur(); } else toast('Nothing on the map matches that.');
+    if (hit) { focusNode(hit.id); $('search').blur(); } else toast(t('Nothing on the map matches that.'));
   }
   $('search').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); runSearch(); } });
   $('search').addEventListener('change', runSearch);
@@ -651,18 +677,18 @@
   function outcomeTags(e) {
     const o = e.outcome || {};
     return [
-      e.issue ? (ISSUES[e.issue] || ISSUES.note).label : '',
-      o.newFacts ? `+${o.newFacts} new fact${o.newFacts === 1 ? '' : 's'}` : o.newLinks ? `+${o.newLinks} links` : '',
-      o.told ? `${o.told} alerted` : '',
-      o.caseId ? `case #${o.caseId}` : '',
-      ...(o.did || []).map((k) => DID_TAG[k]).filter(Boolean),
-      e.intent === 'question' ? 'answered' : '',
+      e.issue ? t((ISSUES[e.issue] || ISSUES.note).label) : '',
+      o.newFacts ? (o.newFacts === 1 ? t('+1 new fact') : t('+{n} new facts', { n: o.newFacts })) : o.newLinks ? t('+{n} links', { n: o.newLinks }) : '',
+      o.told ? t('{n} alerted', { n: o.told }) : '',
+      o.caseId ? t('case #{id}', { id: o.caseId }) : '',
+      ...(o.did || []).map((k) => DID_TAG[k] && t(DID_TAG[k])).filter(Boolean),
+      e.intent === 'question' ? t('answered') : '',
     ].filter(Boolean);
   }
   function entryView(e) {
-    if (e.state === 'pending') return { badge: '<span class="badge pending"></span>', t: `${e.asset_id} · ${e.person_name || SOURCE_LABEL[e.source] || 'new report'}`, m: 'Received. Working out what it is…', tags: [] };
-    if (e.state === 'failed') return { badge: badge('alert', URGENCY.critical.color), t: `${e.asset_id || 'Report'} · couldn’t process`, m: e.error || 'Unknown error', tags: [] };
-    if (e.state === 'handled') return { badge: badge('x', '#8a8f96'), t: e.deleted?.length ? `Deleted ${e.deleted.length} report${e.deleted.length === 1 ? '' : 's'}` : e.asking ? 'Asked which report to delete' : 'Delete request', m: `${e.asset_id} · ${ago(e.at)}`, tags: [] };
+    if (e.state === 'pending') return { badge: '<span class="badge pending"></span>', t: `${e.asset_id} · ${e.person_name || t(SOURCE_LABEL[e.source] || 'new report')}`, m: t('Received. Working out what it is…'), tags: [] };
+    if (e.state === 'failed') return { badge: badge('alert', URGENCY.critical.color), t: t('{id} · couldn’t process', { id: e.asset_id || t('Report') }), m: e.error || t('Unknown error'), tags: [] };
+    if (e.state === 'handled') return { badge: badge('x', '#8a8f96'), t: e.deleted?.length ? (e.deleted.length === 1 ? t('Deleted 1 report') : t('Deleted {n} reports', { n: e.deleted.length })) : e.asking ? t('Asked which report to delete') : t('Delete request'), m: `${e.asset_id} · ${ago(e.at)}`, tags: [] };
     const r = e.report; const u = URGENCY[r.severity] || URGENCY.low;
     return { badge: badge((ISSUES[e.issue] || ISSUES.note).icon, u.color), t: r.label || problemOf(r).title, m: `${r.asset_id} · ${siteName(r.site_id)} · ${ago(r.created_at)}`, tags: outcomeTags(e) };
   }
@@ -670,7 +696,7 @@
     $('feed').innerHTML = feed.slice(0, 6).map((e, i) => {
       const v = entryView(e);
       return `<button type="button" class="fe ${e.fresh ? 'fresh' : ''}" data-i="${i}">${v.badge}<span style="min-width:0"><span class="t" style="display:block">${esc(v.t)}</span><span class="m" style="display:block">${esc(v.m)}</span>${v.tags.length ? `<span class="tags">${v.tags.map((t) => `<span>${esc(t)}</span>`).join('')}</span>` : ''}</span></button>`;
-    }).join('') || '<div class="muted" style="font-size:13px">New reports show up here the moment they arrive.</div>';
+    }).join('') || `<div class="muted" style="font-size:13px">${t('New reports show up here the moment they arrive.')}</div>`;
     for (const e of feed) e.fresh = false;
   }
   $('feed').addEventListener('click', (ev) => {
@@ -694,7 +720,7 @@
     if (!e) { e = { rid }; feed.unshift(e); }
     Object.assign(e, patch, { fresh: true });
     clearTimeout(e.timer);
-    if (e.state === 'pending') e.timer = setTimeout(() => { if (e.state === 'pending') { Object.assign(e, { state: 'failed', error: 'No result from the server' }); renderFeed(); } }, 60000);
+    if (e.state === 'pending') e.timer = setTimeout(() => { if (e.state === 'pending') { Object.assign(e, { state: 'failed', error: t('No result from the server') }); renderFeed(); } }, 60000);
     if (feed.length > 20) feed.length = 20;
     renderFeed();
     showBanner(e);
@@ -708,7 +734,7 @@
   /* ------------------------------ live updates ------------------------------ */
   const arriving = new Set();
   let reloadTimer = null; let reloading = false; let again = false;
-  const scheduleReload = () => { clearTimeout(reloadTimer); reloadTimer = setTimeout(reload, 350); };
+  const scheduleReload = () => { clearTimeout(reloadTimer); reloadTimer = setTimeout(() => { reload(); KGraph.invalidate(view === 'memory'); }, 350); };
   async function reload() {
     if (!data.view || !network) return;
     if (reloading) { again = true; return; }
@@ -774,7 +800,7 @@
   async function boot() {
     const v = await api('/api/graph/view');
     ingest(v);
-    $('siteSel').innerHTML = `<option value="">All job sites</option>${v.sites.map((s) => `<option value="${esc(s.id)}">${esc(s.name)}</option>`).join('')}`;
+    $('siteSel').innerHTML = `<option value="">${t('All job sites')}</option>${v.sites.map((s) => `<option value="${esc(s.id)}">${esc(s.name)}</option>`).join('')}`;
     if (f.site && !v.sites.some((s) => s.id === f.site)) f.site = '';
     const pos = seedPositions(v);
     nodes.add(v.nodes.map((n) => ({ ...styleNode(n), ...(n.type === 'site' ? {} : pos[n.id]) })));
@@ -786,12 +812,13 @@
     const focus = qs.get('focus');
     if (focus && data.byId.has(focus)) setTimeout(() => focusNode(focus), 300);
   }
+  showView(qs.get('view') === 'memory' || (!qs.has('view') && store.get('graphView') === 'memory') ? 'memory' : 'map', { remember: false });
   boot().catch((err) => {
     // A server started before the site map existed answers "Not found" for its data.
     const stale = /not found/i.test(err.message);
     $('loading').innerHTML = emptyState({
-      icon: 'wifiOff', error: true, title: 'Couldn’t load the map',
-      body: stale ? 'The server is running an older version of Cat Track that doesn’t have the site map yet. Restart it (Ctrl-C, then <code>npm run demo</code>) and reload this page.' : esc(err.message),
+      icon: 'wifiOff', error: true, title: t('Couldn’t load the map'),
+      body: stale ? t('The server is running an older version of Cat Track that doesn’t have the site map yet. Restart it (Ctrl-C, then <code>npm run demo</code>) and reload this page.') : esc(err.message),
     });
     $('loading').style.pointerEvents = 'auto';
   });

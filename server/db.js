@@ -112,6 +112,7 @@ for (const sql of [
   'ALTER TABLE eng_cases ADD COLUMN ai_analysis_by TEXT',
   'ALTER TABLE alerts ADD COLUMN resolved_by_report INTEGER', // the repair report that closed it
   'ALTER TABLE fixes ADD COLUMN report_id INTEGER', // the report a field fix was learned from
+  'ALTER TABLE reports ADD COLUMN lang TEXT', // language the report was given in (en/es/hi)
 ]) {
   try { db.exec(sql); } catch { /* column already exists */ }
 }

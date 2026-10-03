@@ -49,7 +49,9 @@ function runTool(name, input, handlers, ctx) {
   try {
     if (!handler) throw new Error(`Unknown tool ${name}`);
     if (typeof input !== 'object' || input === null) throw new Error('Tool input must be a JSON object');
-    const output = handler(input, ctx);
+    // A null argument means "not given", so the handler's own defaults apply (e.g. search limit).
+    const args = Object.fromEntries(Object.entries(input).filter(([, v]) => v !== null));
+    const output = handler(args, ctx);
     return { output, isError: Boolean(output && output.error) };
   } catch (err) { return { output: { error: err.message }, isError: true }; }
 }
@@ -77,6 +79,10 @@ function extraParams(model) {
   return extra;
 }
 
+// The host checked the model's tool arguments against the schema and refused them (Groq: "tool call
+// validation failed"). That's a bad generation, not an unsupported setting, so it isn't retried plain.
+const TOOL_ARGS_RE = /tool call validation failed|tool_use_failed|did not match schema/i;
+
 /** chat.completions.create with graceful degradation if the endpoint rejects optional params. */
 async function oaCreate(params, options) {
   const model = params.model || process.env.AI_MODEL;
@@ -85,7 +91,7 @@ async function oaCreate(params, options) {
   try {
     return await oaClient().chat.completions.create(body, options);
   } catch (err) {
-    if (err instanceof OpenAI.BadRequestError && (Object.keys(extras).length || body.response_format)) {
+    if (err instanceof OpenAI.BadRequestError && !TOOL_ARGS_RE.test(err.message) && (Object.keys(extras).length || body.response_format)) {
       const plain = { ...params, model };
       delete plain.response_format;
       console.warn('[llm] endpoint rejected optional params, retrying plain:', err.message);
@@ -119,12 +125,29 @@ async function oaComplete({ system, prompt, maxTokens, timeoutMs, model }) {
   return cleanText(res.choices[0].message.content);
 }
 
+// Models often write null for an optional argument they don't need ({"site_id": null}), and hosts that
+// validate arguments (Groq) reject the whole turn for it, so optional arguments accept null as well.
+function nullableOptional(schema) {
+  const required = new Set(schema?.required || []);
+  const properties = Object.fromEntries(Object.entries(schema?.properties || {}).map(([k, p]) => [k, required.has(k) || !p.type ? p
+    : { ...p, type: [...new Set([].concat(p.type, 'null'))], ...(p.enum ? { enum: [...p.enum, null] } : {}) }]));
+  return { ...schema, properties };
+}
+
 async function oaToolAgent({ system, question, tools, handlers, ctx, maxTurns }) {
-  const oaTools = tools.map((t) => ({ type: 'function', function: { name: t.name, description: t.description, parameters: t.input_schema } }));
+  const oaTools = tools.map((t) => ({ type: 'function', function: { name: t.name, description: t.description, parameters: nullableOptional(t.input_schema) } }));
   const messages = [{ role: 'system', content: system }, { role: 'user', content: question }];
   const trace = [];
+  // One more try when the host refuses the model's tool arguments, told what went wrong.
+  const step = async (params) => {
+    try { return await oaCreate(params, { timeout: 45_000 }); } catch (err) {
+      if (!(err instanceof OpenAI.BadRequestError) || !TOOL_ARGS_RE.test(err.message)) throw err;
+      console.warn('[llm] the model wrote invalid tool arguments; trying the turn again:', err.message.replace(/^400\s*/, '').slice(0, 200));
+      return oaCreate({ ...params, temperature: 0, messages: [...params.messages, { role: 'user', content: `That tool call was rejected (${err.message.replace(/^400\s*/, '').slice(0, 200)}). Call the tool again with valid arguments, leaving out any optional argument you don't need.` }] }, { timeout: 45_000 });
+    }
+  };
   for (let turn = 0; turn < maxTurns; turn++) {
-    const res = await oaCreate({ messages, tools: oaTools, tool_choice: 'auto', temperature: 0.3, max_tokens: 1500 }, { timeout: 45_000 });
+    const res = await step({ messages, tools: oaTools, tool_choice: 'auto', temperature: 0.3, max_tokens: 1500 });
     const msg = res.choices[0].message;
     const calls = msg.tool_calls || [];
     if (!calls.length) return { answer: cleanText(msg.content) || '(no answer)', trace };
@@ -244,22 +267,24 @@ export function sttInfo() {
   return model ? { model, host: host() } : null;
 }
 
+import { STT } from './i18n.js';
+
 // Part names, codes and machine words Whisper should expect (it biases towards the prompt's vocabulary).
-const STT_PROMPT = 'Caterpillar job site report. Cat 336, 777, D6, 966, 140 motor grader. EX-0412, HT-0761, DZ-0107, WL-0233. '
-  + 'Hydraulic hose, boom cylinder, stick cylinder, swing drive, idler, final drive, undercarriage, ripper, DEF, DPF, turbo, coolant, CID 110 FMI 15, SPN, fault code, derate.';
+const STT_PROMPT = 'Caterpillar job site report. Cat 336, 777, D6, 966, 140 motor grader. EX-0412, HT-0761, DZ-0107, WL-0233. ' + STT.en.prompt;
 // Whisper's well-known inventions on silence or noise.
 const HALLUCINATION = /^(thank you( for watching)?|thanks for watching|you|bye|\.|okay\.?|subtitles by .*)[.!]?$/i;
 
-export async function transcribe(buffer, mime = 'audio/webm') {
+export async function transcribe(buffer, mime = 'audio/webm', lang = 'en') {
   const info = sttInfo();
   if (!info) throw Object.assign(new Error('Speech to text is not set up on this server.'), { status: 503 });
   if (!buffer?.length) throw Object.assign(new Error('No audio received.'), { status: 400 });
   const type = String(mime).split(';')[0].trim() || 'audio/webm';
   const ext = /mp4|m4a|aac/.test(type) ? 'm4a' : /ogg/.test(type) ? 'ogg' : /wav/.test(type) ? 'wav' : /mpeg|mp3/.test(type) ? 'mp3' : 'webm';
+  const stt = STT[lang] || STT.en;
   const started = Date.now();
   const r = await oaClient().audio.transcriptions.create({
     file: await toFile(buffer, `speech.${ext}`, { type }),
-    model: info.model, language: 'en', prompt: STT_PROMPT, temperature: 0, response_format: 'json',
+    model: info.model, language: stt.code, prompt: lang === 'en' ? STT_PROMPT : stt.prompt, temperature: 0, response_format: 'json',
   });
   let text = cleanText(r?.text || '').replace(/\s+/g, ' ').trim();
   if (HALLUCINATION.test(text)) text = '';

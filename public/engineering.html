@@ -50,24 +50,27 @@
   <div id="top"></div>
   <div class="page">
     <div class="page-head">
-      <div><div class="label">CAT Engineering</div><h1 style="margin-top:6px">Field issues across the fleet</h1><div class="sub">Mechanical failures from every job site, grouped by model and part. Each case keeps the operators’ own words.</div></div>
+      <div><div class="label" data-i18n>CAT Engineering</div><h1 style="margin-top:6px" data-i18n>Field issues across the fleet</h1><div class="sub" data-i18n>Mechanical failures from every job site, grouped by model and part. Each case keeps the operators’ own words.</div></div>
       <div class="row wrap">
-        <select class="select" id="statusFilter" style="width:auto" aria-label="Filter cases">
-          <option value="open">Open cases</option><option value="all">All cases</option><option value="new">New</option><option value="investigating">Investigating</option><option value="quick_fix_issued">Quick fix sent</option><option value="product_update">Design change planned</option><option value="closed">Closed</option>
+        <select class="select" id="statusFilter" style="width:auto" aria-label="Filter cases" data-i18n-attr="aria-label">
+          <option value="open" data-i18n>Open cases</option><option value="all" data-i18n>All cases</option><option value="new" data-i18n>New</option><option value="investigating" data-i18n>Investigating</option><option value="quick_fix_issued" data-i18n>Quick fix sent</option><option value="product_update" data-i18n>Design change planned</option><option value="closed" data-i18n>Closed</option>
         </select>
-        <select class="select" id="engineerSel" style="width:auto" aria-label="Signed in as"></select>
-        <a class="btn" href="/library">Product library</a>
+        <select class="select" id="engineerSel" style="width:auto" aria-label="Signed in as" data-i18n-attr="aria-label"></select>
+        <a class="btn" href="/library" data-i18n>Product library</a>
       </div>
     </div>
     <div class="statline" id="stats"><span class="sk" style="width:160px;height:56px"></span><span class="sk line" style="width:420px"></span></div>
     <div class="grid-2">
       <div class="panel">
-        <div class="panel-head"><h3>Cases</h3><span class="count" id="caseCount"></span></div>
+        <div class="panel-head"><h3 data-i18n>Cases</h3><span class="count" id="caseCount"></span></div>
         <div class="scroll case-list" id="cases"></div>
       </div>
       <div class="panel panel-pad" id="detail"></div>
     </div>
   </div>
+  <script src="/i18n/es.js"></script>
+  <script src="/i18n/hi.js"></script>
+  <script src="/js/i18n.js"></script>
   <script src="/js/common.js"></script>
   <script src="/js/engineering.js"></script>
 </body>

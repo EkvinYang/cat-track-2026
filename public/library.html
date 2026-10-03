@@ -55,39 +55,42 @@
   <div id="top"></div>
   <div class="page">
     <div class="page-head">
-      <div><div class="label">CAT Engineering</div><h1 style="margin-top:6px">Product library</h1><div class="sub">Spec sheets, policies and service bulletins for new products. The document agent reads each one and wires it into the knowledge graph, so field answers can cite it the same day.</div></div>
-      <a class="btn" href="/engineering">Field issues</a>
+      <div><div class="label" data-i18n>CAT Engineering</div><h1 style="margin-top:6px" data-i18n>Product library</h1><div class="sub" data-i18n>Spec sheets, policies and service bulletins for new products. The document agent reads each one and wires it into the knowledge graph, so field answers can cite it the same day.</div></div>
+      <a class="btn" href="/engineering" data-i18n>Field issues</a>
     </div>
     <div class="grid-2">
       <div class="stack">
         <div class="panel panel-pad">
-          <h3>Add a document</h3>
+          <h3 data-i18n>Add a document</h3>
           <label class="drop" id="drop" style="margin-top:12px">
             <input type="file" id="file" class="hidden" accept=".pdf,.docx,.txt,.md,.markdown,.csv,.json,.html,.htm">
-            <span id="dropIcon"></span><span class="t">Drop a file here, or click to choose</span><span class="b">PDF, Word, text, Markdown or CSV · up to 15 MB</span>
+            <span id="dropIcon"></span><span class="t" data-i18n>Drop a file here, or click to choose</span><span class="b" data-i18n>PDF, Word, text, Markdown or CSV · up to 15 MB</span>
           </label>
           <div class="picked hidden" id="picked"></div>
-          <div class="field"><label class="lbl" for="docType">What it is</label>
-            <select class="select" id="docType"><option value="spec_sheet">Spec sheet</option><option value="policy">Policy</option><option value="service_bulletin">Service bulletin</option><option value="manual">Manual</option><option value="other">Something else</option></select></div>
-          <div class="field"><label class="lbl" for="product">Product or model <span class="faint" style="text-transform:none;letter-spacing:0">(optional)</span></label>
+          <div class="field"><label class="lbl" for="docType" data-i18n>What it is</label>
+            <select class="select" id="docType"><option value="spec_sheet" data-i18n>Spec sheet</option><option value="policy" data-i18n>Policy</option><option value="service_bulletin" data-i18n>Service bulletin</option><option value="manual" data-i18n>Manual</option><option value="other" data-i18n>Something else</option></select></div>
+          <div class="field"><label class="lbl" for="product"><span data-i18n>Product or model</span> <span class="faint" style="text-transform:none;letter-spacing:0" data-i18n>(optional)</span></label>
             <input class="input" id="product" list="models" placeholder="Cat 337 HX" autocomplete="off"><datalist id="models"></datalist></div>
-          <div class="field"><label class="lbl" for="uploader">Added by</label><select class="select" id="uploader"></select></div>
-          <button class="btn primary block" id="go" style="margin-top:16px" disabled>Add to the library</button>
+          <div class="field"><label class="lbl" for="uploader" data-i18n>Added by</label><select class="select" id="uploader"></select></div>
+          <button class="btn primary block" id="go" style="margin-top:16px" disabled data-i18n>Add to the library</button>
           <div class="samples" style="margin-top:16px;border-top:1px solid var(--line);padding-top:12px">
-            <div class="muted" style="font-size:13px">No file handy? Add a demo document:</div>
-            <button data-sample="cat-337-hx-spec-sheet-DEMO.pdf" data-type="spec_sheet" data-product="Cat 337 HX">Spec sheet: Cat 337 HX excavator (PDF)</button>
-            <button data-sample="hot-weather-operations-policy-DEMO.md" data-type="policy" data-product="">Policy: hot-weather operations (Markdown)</button>
-            <button data-sample="service-bulletin-wl-transmission-DEMO.docx" data-type="service_bulletin" data-product="Cat 966">Service bulletin: Cat 966 transmission (Word)</button>
+            <div class="muted" style="font-size:13px" data-i18n>No file handy? Add a demo document:</div>
+            <button data-sample="cat-337-hx-spec-sheet-DEMO.pdf" data-type="spec_sheet" data-product="Cat 337 HX" data-i18n>Spec sheet: Cat 337 HX excavator (PDF)</button>
+            <button data-sample="hot-weather-operations-policy-DEMO.md" data-type="policy" data-product="" data-i18n>Policy: hot-weather operations (Markdown)</button>
+            <button data-sample="service-bulletin-wl-transmission-DEMO.docx" data-type="service_bulletin" data-product="Cat 966" data-i18n>Service bulletin: Cat 966 transmission (Word)</button>
           </div>
         </div>
         <div class="panel">
-          <div class="panel-head"><h3>In the library</h3><span class="count" id="docCount"></span></div>
+          <div class="panel-head"><h3 data-i18n>In the library</h3><span class="count" id="docCount"></span></div>
           <div id="docs" class="scroll" style="max-height:520px"></div>
         </div>
       </div>
       <div class="panel panel-pad detail" id="detail"></div>
     </div>
   </div>
+  <script src="/i18n/es.js"></script>
+  <script src="/i18n/hi.js"></script>
+  <script src="/js/i18n.js"></script>
   <script src="/js/common.js"></script>
   <script src="/js/library.js"></script>
 </body>

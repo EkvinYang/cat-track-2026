@@ -56,7 +56,7 @@ export function graphView() {
       created_at: r.created_at, source: r.source, person_name: r.person_name, person_role: r.person_role,
       summary: r.summary, raw_text: r.raw_text, part: ex.components?.[0] || null,
       problem: (ex.symptoms || []).find((s) => s !== 'Warning / fault code') || ex.symptoms?.[0] || null,
-      codes: ex.fault_codes || [], conditions: ex.conditions || [], hazards: ex.safety_hazards || [], guidance: ex.operator_guidance || '',
+      codes: ex.fault_codes || [], conditions: ex.conditions || [], hazards: ex.safety_hazards || [], guidance: ex.operator_guidance || '', diagnosis: ex.diagnosis || null,
     });
     edges.push({ id: `about:${r.id}`, from: id, to: nodeId('asset', r.asset_id), type: 'ABOUT' });
   }

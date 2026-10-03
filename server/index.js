@@ -10,16 +10,22 @@ const QRCode = (await import('qrcode')).default;
 const { q, nowIso, UPLOAD_DIR, alertRow } = await import('./db.js');
 const { sseHandler, publish, clientCount } = await import('./events.js');
 const { getGraph, getNeighborhood, nodeDetail, graphStats, nodeId } = await import('./graph.js');
-const { ingestReport, issueQuickFix, resolveAlert, resolveFromReport, HttpError, recipientsFor } = await import('./pipeline.js');
+const { ingestReport, issueQuickFix, resolveAlert, resolveFromReport, diagnoseReport, HttpError, recipientsFor } = await import('./pipeline.js');
 const memory = await import('./memory.js');
 const { ask, analyzeCase } = await import('./agent.js');
 const { acceptUpload, listDocuments, getDocument } = await import('./docs.js');
 const { listReports, listDeleted, deleteReports, restoreReports, editReport, listNotes, addNote, deleteNote } = await import('./history.js');
 const { COMPONENTS, SYMPTOMS, ISSUE_TYPES } = await import('./vocab.js');
 const { graphView } = await import('./graphview.js');
+const { memoryGraph } = await import('./memorygraph.js');
+const { decodeFaultCode, codeStats } = await import('./faultcodes.js');
 const { needsSeed, seed } = await import('./seed.js');
 const { setTelemetry, telemetryOn, latestTelemetry } = await import('./telemetry.js');
 const { llmEnabled, llmInfo, sttInfo, transcribe } = await import('./llm.js');
+const { normalizeLang } = await import('./i18n.js');
+
+/** The language the client says it is showing (its Accept-Language header), or null. */
+const headerLang = (req) => normalizeLang(String(req.get('accept-language') || '').split(',')[0]);
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.join(here, '..');
@@ -48,7 +54,7 @@ app.get('/api/stream', sseHandler);
 
 // Voice notes recorded on the phone, turned into text by the server's speech model.
 app.post('/api/transcribe', express.raw({ type: () => true, limit: '20mb' }), async (req, res) => {
-  res.json(await transcribe(req.body, req.get('content-type') || 'audio/webm'));
+  res.json(await transcribe(req.body, req.get('content-type') || 'audio/webm', normalizeLang(req.query.lang) || 'en'));
 });
 app.get('/api/vocab', (_req, res) => res.json({ components: COMPONENTS.map((c) => c.name), symptoms: SYMPTOMS.map((x) => x.name), issueTypes: ISSUE_TYPES, severities: ['critical', 'high', 'medium', 'low'] }));
 
@@ -95,7 +101,7 @@ app.get('/api/assets/:id', (req, res) => {
   const lastMech = reports.find((r) => r.category === 'mechanical');
   res.json({
     asset,
-    memory: memory.assetMemory(id),
+    memory: memory.assetMemory(id, headerLang(req) || 'en'),
     reports,
     alerts: memory.openAlertsForAsset(id).map(ALERT_ROW),
     actions: q.all(`SELECT * FROM action_items WHERE asset_id = ? AND status = 'open' ORDER BY created_at DESC`, id),
@@ -109,7 +115,7 @@ app.get('/api/assets/:id/timeline', (req, res) => {
   res.json(memory.recentReports(id, 500));
 });
 app.get('/api/assets/:id/insights', (req, res) => {
-  const out = memory.roleInsights(memory.normalizeAssetId(req.params.id), String(req.query.role || 'operator'));
+  const out = memory.roleInsights(memory.normalizeAssetId(req.params.id), String(req.query.role || 'operator'), normalizeLang(req.query.lang) || headerLang(req) || 'en');
   if (!out) return res.status(404).json({ error: 'Unknown asset' });
   res.json(out);
 });
@@ -117,8 +123,8 @@ app.get('/api/assets/:id/graph', (req, res) => res.json(getNeighborhood(nodeId('
 
 // ---------- ingestion ----------
 app.post('/api/reports', async (req, res) => {
-  const { assetId, personId, text, source, photo } = req.body || {};
-  const out = await ingestReport({ assetId, personId, text, source: ['voice', 'text', 'inspection', 'repair', 'telemetry'].includes(source) ? source : 'text', photo });
+  const { assetId, personId, text, source, photo, lang } = req.body || {};
+  const out = await ingestReport({ assetId, personId, text, source: ['voice', 'text', 'inspection', 'repair', 'telemetry'].includes(source) ? source : 'text', photo, lang: normalizeLang(lang) || headerLang(req) });
   res.json(out);
 });
 app.get('/api/reports', (req, res) => {
@@ -145,6 +151,8 @@ app.patch('/api/reports/:id', (req, res) => {
   const allowed = ['summary', 'severity', 'raw_text', 'part', 'problem', 'issue'];
   res.json(editReport(Number(req.params.id), Object.fromEntries(Object.entries(changes).filter(([k]) => allowed.includes(k))), { personId: personId || null }));
 });
+// Follow a stored report through the knowledge graph again (older reports, or after an edit), in the asker's language.
+app.post('/api/reports/:id/diagnose', async (req, res) => res.json({ diagnosis: await diagnoseReport(Number(req.params.id), { lang: normalizeLang(req.body?.lang) || headerLang(req) }) }));
 app.get('/api/reports/:id/notes', (req, res) => res.json(listNotes(Number(req.params.id))));
 app.post('/api/reports/:id/notes', (req, res) => res.json(addNote(Number(req.params.id), req.body?.text, { personId: req.body?.personId || null })));
 app.delete('/api/reports/:id/notes/:noteId', (req, res) => res.json(deleteNote(Number(req.params.id), Number(req.params.noteId))));
@@ -312,6 +320,16 @@ app.post('/api/documents', (req, res) => {
 app.get('/api/graph', (req, res) => res.json(getGraph({ includeReports: req.query.reports !== '0' })));
 app.get('/api/graph/stats', (_req, res) => res.json(graphStats()));
 app.get('/api/graph/view', (_req, res) => res.json(graphView()));
+app.get('/api/graph/memory', (_req, res) => res.json(memoryGraph()));
+
+// Error-code breakdown: what the CID/SPN and FMI mean, how often it has come up, and a cat.com search.
+app.get('/api/codes/decode', (req, res) => {
+  const code = String(req.query.code || '').slice(0, 40);
+  if (!code.trim()) return res.status(400).json({ error: 'Which code?' });
+  const asset = req.query.asset ? memory.normalizeAssetId(String(req.query.asset)) : null;
+  const decoded = decodeFaultCode(code, normalizeLang(req.query.lang) || headerLang(req) || 'en');
+  res.json({ ...decoded, stats: codeStats(decoded.code, { assetId: asset }) });
+});
 app.get('/api/graph/node', (req, res) => {
   const d = nodeDetail(String(req.query.id || ''));
   if (!d) return res.status(404).json({ error: 'Node not found' });
@@ -321,8 +339,8 @@ app.get('/api/graph/node', (req, res) => {
 
 // ---------- agent ----------
 app.post('/api/ask', async (req, res) => {
-  const { question, assetId, role, personId } = req.body || {};
-  res.json(await ask({ question: String(question || '').slice(0, 1000), assetId, role, personId }));
+  const { question, assetId, role, personId, lang } = req.body || {};
+  res.json(await ask({ question: String(question || '').slice(0, 1000), assetId, role, personId, lang: normalizeLang(lang) || headerLang(req) }));
 });
 
 // ---------- telemetry simulator ----------

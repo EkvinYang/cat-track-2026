@@ -56,34 +56,39 @@
   const machineIcon = (family, cls = '') => icon(FAMILY_ICON[family] || 'excavator', cls);
 
   const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  // Language: English text is the key; see /js/i18n.js. Everything user-visible goes through t().
+  const I = window.I18N || { lang: 'en', locale: undefined, speech: 'en-US', t: (k, v) => String(k).replace(/\{(\w+)\}/g, (m, n) => (v && v[n] != null ? v[n] : m)), picker: () => '', apply: () => {} };
+  const t = I.t;
 
   async function api(path, opts = {}) {
-    const init = { method: opts.method || (opts.body ? 'POST' : 'GET'), headers: { 'ngrok-skip-browser-warning': '1' } };
+    const init = { method: opts.method || (opts.body ? 'POST' : 'GET'), headers: { 'ngrok-skip-browser-warning': '1', 'Accept-Language': I.lang } };
     if (opts.body !== undefined) { init.headers['Content-Type'] = 'application/json'; init.body = JSON.stringify(opts.body); }
     let res;
-    try { res = await fetch(path, init); } catch { throw new Error('No connection to Cat Track. Check your signal and try again.'); }
+    try { res = await fetch(path, init); } catch { throw new Error(t('No connection to Cat Track. Check your signal and try again.')); }
     let data = null;
     try { data = await res.json(); } catch { /* non-JSON */ }
-    if (!res.ok) throw new Error((data && data.error) || `Request failed (${res.status})`);
+    if (!res.ok) throw new Error((data && data.error) || t('Request failed ({status})', { status: res.status }));
     return data;
   }
 
   function ago(iso) {
     if (!iso) return '';
     const s = Math.round((Date.now() - new Date(iso).getTime()) / 1000);
-    if (s < 45) return 'just now';
-    if (s < 3600) return `${Math.round(s / 60)} min ago`;
-    if (s < 86400) return `${Math.round(s / 3600)} h ago`;
-    if (s < 86400 * 30) return `${Math.round(s / 86400)} d ago`;
-    return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+    if (s < 45) return t('just now');
+    if (s < 3600) return t('{n} min ago', { n: Math.round(s / 60) });
+    if (s < 86400) return t('{n} h ago', { n: Math.round(s / 3600) });
+    if (s < 86400 * 30) return t('{n} d ago', { n: Math.round(s / 86400) });
+    return new Date(iso).toLocaleDateString(I.locale, { month: 'short', day: 'numeric', year: 'numeric' });
   }
-  const dateShort = (iso) => (iso ? new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : '');
-  const dateTime = (iso) => (iso ? new Date(iso).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '');
+  const dateShort = (iso) => (iso ? new Date(iso).toLocaleDateString(I.locale, { month: 'short', day: 'numeric' }) : '');
+  const dateTime = (iso) => (iso ? new Date(iso).toLocaleString(I.locale, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '');
 
+  // Label tables stay English here; look them up with lbl() so they render in the active language.
+  const lbl = (table, key, fallback = '') => t(table[key] || fallback || key || '');
   const SEV_LABEL = { critical: 'Critical', high: 'High', medium: 'Medium', low: 'Low' };
-  const sevPill = (sev) => `<span class="sev sev-${esc(sev || 'low')}"><i></i>${esc(SEV_LABEL[sev] || sev || 'Info')}</span>`;
+  const sevPill = (sev) => `<span class="sev sev-${esc(sev || 'low')}"><i></i>${esc(t(SEV_LABEL[sev] || sev || 'Info'))}</span>`;
   const STATUS_LABEL = { operational: 'Running', attention: 'Needs attention', down: 'Down' };
-  const statusPill = (st) => `<span class="st st-${esc(st)}"><i></i>${esc(STATUS_LABEL[st] || st)}</span>`;
+  const statusPill = (st) => `<span class="st st-${esc(st)}"><i></i>${esc(t(STATUS_LABEL[st] || st))}</span>`;
   const healthBar = (h) => `<div class="health ${h < 60 ? 'bad' : h < 80 ? 'mid' : ''}" role="meter" aria-valuenow="${h}" aria-valuemin="0" aria-valuemax="100"><i style="width:${Math.max(3, Math.min(100, h))}%"></i></div>`;
   const ROLE = { operator: 'Operator', technician: 'Technician', site_manager: 'Site manager', safety_officer: 'Safety officer', fleet_manager: 'Fleet manager', cat_engineer: 'CAT engineer' };
   const SOURCE_ICON = { voice: 'mic', text: 'chat', telemetry: 'radio', repair: 'wrench', inspection: 'check' };
@@ -115,10 +120,10 @@
     const hazard = src.hazard ?? ex.safety_hazards?.[0] ?? null;
     const code = src.code ?? ex.fault_codes?.[0] ?? null;
     let title;
-    if (src.category === 'maintenance') title = part ? `Repair · ${part}` : clip(src.summary, 64);
-    else if (part && problem) title = `${part} · ${problem}`;
-    else if (hazard) title = hazard;
-    else if (part) title = part;
+    if (src.category === 'maintenance') title = part ? `${t('Repair')} · ${t(part)}` : clip(src.summary, 64);
+    else if (part && problem) title = `${t(part)} · ${t(problem)}`;
+    else if (hazard) title = t(hazard);
+    else if (part) title = t(part);
     else title = clip(src.headline || src.summary || src.title, 64);
     return { title, part, problem, hazard, code };
   }
@@ -138,25 +143,98 @@
     const [first, ...updates] = String(body || '').split('\n');
     let todo = first;
     const take = (re) => { const m = todo.match(re); if (!m) return null; todo = todo.replace(m[0], ' ').replace(/\s+/g, ' ').trim(); return m[1].trim(); };
+    // The diagnosis' likely fix always ends the first line: "Likely fix (CAT quick fix): …".
+    let likely = null;
+    const lm = todo.match(/\s*Likely fix \(([^)]*)\):\s*(.+)$/);
+    if (lm) { todo = todo.slice(0, lm.index).trim(); likely = `${lm[2].trim().replace(/\.$/, '')} (${t(lm[1])})`; }
     const engineering = take(/((?:Sent to|Escalated to) CAT Engineering[^]*?)(?=What worked before:|$)/);
-    const before = take(/What worked before:\s*([^]*?\))\.?/);
-    return { todo: todo.trim(), before, engineering, updates: updates.map((u) => u.trim()).filter(Boolean) };
+    // The fix title can hold its own brackets ("every 250 h (100 h at dusty sites)"); the record count ends it.
+    const before = take(/What worked before:\s*([^]*?\(\d+ of \d+ times?\))\.?/) || take(/What worked before:\s*([^]*?\))\.?/);
+    return { todo: todo.trim(), before, engineering, likely, updates: updates.map((u) => u.trim()).filter(Boolean) };
   }
+  // The server writes these parts of an alert in English; word them for the screen.
+  const sayBefore = (s) => { const m = /^(.*) \((\d+) of (\d+) times\)$/.exec(s || ''); return m ? `${m[1]} (${t('{n} of {total} times', { n: m[2], total: m[3] })})` : s; };
+  const sayEngineering = (s) => {
+    // Current wording, and the one older records were written with ("Escalated to CAT Engineering — case #3 (2 fleet reports).").
+    const m = /^Sent to CAT Engineering as case #(\d+), now (\d+) reports? across the fleet\.?$/.exec(s || '') || /^Escalated to CAT Engineering — case #(\d+) \((\d+) fleet reports?\)\.?$/.exec(s || '');
+    return m ? (m[2] === '1' ? t('Sent to CAT Engineering as case #{id}, now 1 report across the fleet.', { id: m[1] }) : t('Sent to CAT Engineering as case #{id}, now {n} reports across the fleet.', { id: m[1], n: m[2] })) : s;
+  };
+  const sayUpdate = (s) => { const m = /^Update (.+?)(?: from (.+?))?: (.*)$/.exec(s); return !m ? s : m[2] ? t('Update {when} from {who}: {text}', { when: m[1], who: m[2], text: m[3] }) : t('Update {when}: {text}', { when: m[1], text: m[3] }); };
   /** The inside of an alert's dropdown: what to do, what worked before, the escalation, updates. */
   function alertDetails(a, extra = []) {
     const b = splitAlertBody(a.body);
     return kv([
-      ['What to do', esc(b.todo)],
-      ['Worked before', esc(b.before || '')],
-      ['CAT Engineering', esc(b.engineering || '')],
-      ['Updates', b.updates.map(esc).join('<br>')],
-      ['Fault code', esc(a.code || '')],
-      ['Fixed', esc(a.resolution || '')],
+      [t('What to do'), esc(b.todo)],
+      [t('Likely fix'), esc(b.likely || '')],
+      [t('Worked before'), esc(sayBefore(b.before) || '')],
+      [t('CAT Engineering'), esc(sayEngineering(b.engineering) || '')],
+      [t('Updates'), b.updates.map((u) => esc(sayUpdate(u))).join('<br>')],
+      [t('Fault code'), a.code ? codeChips([a.code], { assetId: a.asset_id || '' }) : ''],
+      [t('Fixed'), esc(a.resolution || '')],
       ...extra,
     ]);
   }
   const alertTitle = (a) => (a.kind === 'bulletin' ? clip(a.headline || a.title, 72) : problemOf(a).title);
   const toneOf = (r) => (r.status === 'withdrawn' ? 'withdrawn' : r.category === 'maintenance' ? 'repair' : r.kind === 'bulletin' || r.kind === 'agent' ? 'bulletin' : r.severity || '');
+
+  // ---------- error codes: a chip that opens into the breakdown ----------
+  /** Fault codes as dropdown chips. Opening one fetches what the CID/SPN and FMI mean (in the screen's language), how often it has come up, and a cat.com search link. */
+  const codeChips = (codes, { assetId = '' } = {}) => (codes || []).map((c) => `<details class="code-dd" data-code="${esc(c)}" data-asset="${esc(assetId)}"><summary title="${esc(t('What this code means'))}"><span class="code-tag">${esc(c)}</span>${icon('chevron', 'chev')}</summary><div class="code-body"><span class="sk line" style="width:70%"></span></div></details>`).join('');
+  function codeBreakdown(x) {
+    const s = x.stats || {};
+    const isNum = ['CID', 'SPN', 'MID'].includes(x.scheme);
+    const reports = s.reports === 1 ? t('1 report') : t('{n} reports', { n: s.reports });
+    const machines = s.machines === 1 ? t('1 machine') : t('{n} machines', { n: s.machines });
+    const seen = s.reports ? `${t('{reports} on {machines}', { reports, machines })}${s.onThisMachine ? ` ${t('({n} on this one)', { n: s.onThisMachine })}` : ''} · ${t('last {when}', { when: ago(s.lastSeen) })}` : t('First time on record');
+    const what = x.component
+      ? `<b>${esc(isNum ? `${x.scheme} ${x.id}` : x.code)}</b> · ${esc(x.component.label)} <span class="faint">(${esc(x.component.partLabel || t(x.component.part))})</span>`
+      : esc(isNum ? t('{code}: not in Cat Track’s table', { code: `${x.scheme} ${x.id}` }) : x.code);
+    return `${kv([
+      [x.scheme === 'event' ? t('Event') : isNum ? t('Component') : t('Code'), what],
+      [t('Failure mode'), x.fmi != null ? `<b>FMI ${x.fmi}</b> · ${esc(x.failure ? x.failure.label : t('not in the FMI table'))}${x.failure ? `<div class="faint" style="margin-top:2px">${esc(x.failure.detail)}</div>` : ''}` : x.scheme === 'event' && x.failure ? esc(x.failure.detail) : ''],
+      [t('Severity'), x.severity ? sevPill(x.severity) : ''],
+      [t('In short'), esc(x.summary)],
+      [t('On record'), esc(seen)],
+    ])}<div class="code-foot"><a class="btn sm" href="${esc(x.search)}" target="_blank" rel="noopener noreferrer">${icon('search')} ${t('Search cat.com')}</a><span class="faint">${!x.known ? t('Not in Cat Track’s code table.') : x.scheme === 'event' ? t('Confirm in Cat SIS or Cat ET.') : t('Standard J1939 meanings; confirm in Cat SIS or Cat ET.')}</span></div>`;
+  }
+  document.addEventListener('toggle', async (e) => {
+    const d = e.target;
+    if (!d.matches || !d.matches('details.code-dd') || !d.open || d.dataset.loaded) return;
+    d.dataset.loaded = '1';
+    const body = d.querySelector('.code-body');
+    try {
+      const x = await api(`/api/codes/decode?code=${encodeURIComponent(d.dataset.code)}&lang=${encodeURIComponent(I.lang)}${d.dataset.asset ? `&asset=${encodeURIComponent(d.dataset.asset)}` : ''}`);
+      body.innerHTML = codeBreakdown(x);
+    } catch (err) { body.textContent = err.message; delete d.dataset.loaded; }
+  }, true);
+
+  // ---------- diagnosis: error → component → pattern → solution ----------
+  const SOLUTION_SOURCE = {
+    cat: () => ['cat', t('CAT quick fix')],
+    fix: (x) => ['fix', x.confidence ? t('Worked before · {n}%', { n: x.confidence }) : t('Worked before')],
+    document: (x) => ['doc', x.ref ? t('Service document {ref}', { ref: x.ref }) : t('Service document')],
+    ai: (x) => ['ai', t('AI-reasoned · {confidence}', { confidence: t(`${['low', 'medium', 'high'].includes(x.confidence) ? x.confidence : 'low'} confidence`) })],
+    checklist: () => ['check', t('Standard checks')],
+  };
+  /** A report's diagnosis as a four-step chain. Sentences are in the report's language; labels in the screen's. */
+  function diagnosisBlock(d, { assetId = '' } = {}) {
+    if (!d) return '';
+    const sol = d.solution || {};
+    const [cls, label] = (SOLUTION_SOURCE[sol.source] || SOLUTION_SOURCE.checklist)(sol);
+    const sub = (html) => (html ? `<div class="d-sub">${html}</div>` : '');
+    const steps = sol.steps || [];
+    return `${d.stale ? `<div class="d-stale">${icon('alert')}<span>${t('The report was edited after this diagnosis. Diagnose again for an up-to-date answer.')}</span></div>` : ''}<ol class="diag">
+      <li><span class="d-k">${t('Error')}</span><div>${d.error?.kind === 'code' ? codeChips([d.error.label], { assetId }) : `<b>${esc(t(d.error?.label || ''))}</b>`}${sub(esc(d.error?.detail || ''))}</div></li>
+      <li><span class="d-k">${t('Component')}</span><div><b>${esc(d.component ? t(d.component.name) : t('Not clear yet'))}</b>${sub(esc(d.component?.why || t('Nothing in the report or the record points to one part.')))}</div></li>
+      <li><span class="d-k">${t('Pattern')}</span><div><b>${esc(d.pattern?.label || '')}</b>${sub((d.pattern?.detail || []).map(esc).join(' '))}${d.pattern?.caseId ? sub(`<a href="/engineering?case=${encodeURIComponent(d.pattern.caseId)}">${t('Open CAT Engineering case #{id}', { id: esc(d.pattern.caseId) })}</a>`) : ''}</div></li>
+      <li class="d-sol"><span class="d-k">${t('Solution')}</span><div><span class="d-src ${cls}">${esc(label)}</span><b class="d-title">${esc(sol.title || '')}</b>
+        ${steps.length > 1 || (steps[0] && steps[0] !== sol.title) ? `<ol class="d-steps">${steps.map((x) => `<li>${esc(x)}</li>`).join('')}</ol>` : ''}
+        ${sub(esc([sol.cause ? t('Likely cause: {cause}', { cause: sol.cause }) : '', sol.record || '', sol.source === 'ai' ? t('Not yet proven in the field. Confirm before replacing parts.') : ''].filter(Boolean).join(' ')))}
+        ${sol.docId ? sub(`<a href="/library?doc=${encodeURIComponent(sol.docId)}">${t('Open {ref}', { ref: esc(sol.ref || t('the document')) })}</a>`) : ''}</div></li>
+    </ol>`;
+  }
+  /** How the solution was found, for a dropdown's count: from the record, AI-reasoned, or standard checks. */
+  const diagnosisCount = (d) => (d?.solution?.source === 'ai' ? t('AI-reasoned') : d?.solution?.source === 'checklist' ? t('standard checks') : t('from the record'));
 
   /** Unglamorous states. */
   const emptyState = ({ icon: ic = 'inbox', title, body = '', action = '', error = false }) =>
@@ -196,12 +274,12 @@
       if (banner) return;
       banner = document.createElement('div');
       banner.className = 'conn-banner';
-      banner.innerHTML = `${icon('wifiOff')}<span>Live updates paused — reconnecting. Anything on this screen may be out of date.</span>`;
+      banner.innerHTML = `${icon('wifiOff')}<span>${t('Live updates paused — reconnecting. Anything on this screen may be out of date.')}</span>`;
       const bar = document.querySelector('.topbar, .op-top');
       if (bar) bar.after(banner); else document.body.prepend(banner);
     };
     const setLive = (on) => {
-      if (liveEl) { liveEl.classList.toggle('on', on); const t = liveEl.querySelector('.txt'); if (t) t.textContent = on ? 'Live' : 'Offline'; }
+      if (liveEl) { liveEl.classList.toggle('on', on); const txt = liveEl.querySelector('.txt'); if (txt) txt.textContent = on ? t('Live') : t('Offline'); }
       clearTimeout(bannerTimer);
       if (on) { banner?.remove(); banner = null; } else bannerTimer = setTimeout(showBanner, 4000);
     };
@@ -227,10 +305,11 @@
     const links = [['/', 'Dashboard'], ['/reports', 'Reports'], ['/graph', 'Graph'], ['/operator', 'Operator']];
     const tab = links.some(([h]) => h === active) ? active : '/';
     return `<header class="topbar">
-      <a class="brand" href="/" aria-label="Cat Track dashboard">CAT<span class="b2">&nbsp;TRACK</span></a>
-      <nav class="nav">${links.map(([h, l]) => `<a href="${h}" class="${tab === h ? 'active' : ''}" ${tab === h ? 'aria-current="page"' : ''}>${l}</a>`).join('')}</nav>
+      <a class="brand" href="/" aria-label="${t('Cat Track dashboard')}">CAT<span class="b2">&nbsp;TRACK</span></a>
+      <nav class="nav">${links.map(([h, l]) => `<a href="${h}" class="${tab === h ? 'active' : ''}" ${tab === h ? 'aria-current="page"' : ''}>${t(l)}</a>`).join('')}</nav>
       <div class="grow"></div>${extra}
-      <span class="live" id="live"><span class="dot"></span><span class="txt">Connecting</span></span>
+      ${I.picker()}
+      <span class="live" id="live"><span class="dot"></span><span class="txt">${t('Connecting')}</span></span>
     </header>`;
   }
 
@@ -240,7 +319,7 @@
     const bar = document.createElement('div');
     bar.className = 'undo-bar';
     bar.setAttribute('role', 'status');
-    bar.innerHTML = `<span class="m">${message}</span><button class="btn sm" type="button">Undo</button>`;
+    bar.innerHTML = `<span class="m">${message}</span><button class="btn sm" type="button">${t('Undo')}</button>`;
     document.body.appendChild(bar);
     const close = () => { clearTimeout(timer); bar.remove(); };
     const timer = setTimeout(close, seconds * 1000);
@@ -262,5 +341,5 @@
     return { el: back.querySelector('.modal'), close: () => back.remove() };
   }
 
-  window.CT = { api, esc, ago, dateShort, dateTime, sevPill, statusPill, healthBar, md, toast, undoBar, connectStream, store, topbar, modal, icon, machineIcon, emptyState, skeleton, ROLE, SOURCE_ICON, SOURCE_LABEL, STATUS_LABEL, REPORT_STATUS, ISSUES, clip, problemOf, metaLine, keyFacts, kv, keyRow, dropdown, toneOf, splitAlertBody, alertDetails, alertTitle, iconPaths, FAMILY_ICON };
+  window.CT = { api, esc, ago, dateShort, dateTime, sevPill, statusPill, healthBar, md, toast, undoBar, connectStream, store, topbar, modal, icon, machineIcon, emptyState, skeleton, ROLE, SOURCE_ICON, SOURCE_LABEL, STATUS_LABEL, REPORT_STATUS, ISSUES, clip, problemOf, metaLine, keyFacts, kv, keyRow, dropdown, toneOf, splitAlertBody, alertDetails, alertTitle, iconPaths, FAMILY_ICON, codeChips, diagnosisBlock, diagnosisCount, t, lbl, lang: I.lang, locale: I.locale, speech: I.speech };
 })();

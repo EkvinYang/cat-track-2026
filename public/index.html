@@ -61,36 +61,39 @@
   <div id="top"></div>
   <div class="page">
     <div class="head">
-      <div><div class="label" id="siteLabel">Dashboard</div><h1 id="siteTitle"><span class="sk title" style="width:360px;height:36px"></span></h1><div class="sub" id="siteSub"></div></div>
+      <div><div class="label" id="siteLabel" data-i18n>Dashboard</div><h1 id="siteTitle"><span class="sk title" style="width:360px;height:36px"></span></h1><div class="sub" id="siteSub"></div></div>
       <div class="row wrap" style="gap:14px">
-        <div class="sites" id="sites" role="group" aria-label="Job site"></div>
-        <label class="switch" title="Stream simulated sensor readings from every machine"><input type="checkbox" id="teleToggle"><span class="track"></span>Sensors</label>
+        <div class="sites" id="sites" role="group" aria-label="Job site" data-i18n-attr="aria-label"></div>
+        <label class="switch" title="Stream simulated sensor readings from every machine" data-i18n-attr="title"><input type="checkbox" id="teleToggle"><span class="track"></span><span data-i18n>Sensors</span></label>
       </div>
     </div>
     <div class="statline" id="stats"><span class="sk" style="width:180px;height:56px"></span><span class="sk line" style="width:420px"></span></div>
     <div class="board">
       <div class="col">
-        <div class="panel"><div class="panel-head"><h3>Open alerts</h3><span class="count" id="alertCount"></span></div><div class="panel-body" id="alerts"></div></div>
-        <div class="panel"><div class="panel-head"><h3>Latest reports</h3><a href="/reports" id="logLink">Report log</a></div><div class="panel-body" id="latest"></div></div>
+        <div class="panel"><div class="panel-head"><h3 data-i18n>Open alerts</h3><span class="count" id="alertCount"></span></div><div class="panel-body" id="alerts"></div></div>
+        <div class="panel"><div class="panel-head"><h3 data-i18n>Latest reports</h3><a href="/reports" id="logLink" data-i18n>Report log</a></div><div class="panel-body" id="latest"></div></div>
       </div>
       <div class="col">
-        <div class="panel"><div class="panel-head"><h3>Machines</h3><span class="count" id="fleetCount"></span></div><div class="panel-body" id="fleet"></div></div>
-        <div class="panel"><div class="panel-head"><h3>Tasks</h3><span class="count" id="actCount"></span></div><div class="panel-body" id="actions"></div></div>
+        <div class="panel"><div class="panel-head"><h3 data-i18n>Machines</h3><span class="count" id="fleetCount"></span></div><div class="panel-body" id="fleet"></div></div>
+        <div class="panel"><div class="panel-head"><h3 data-i18n>Tasks</h3><span class="count" id="actCount"></span></div><div class="panel-body" id="actions"></div></div>
       </div>
       <div class="col">
-        <div class="panel"><div class="panel-head"><h3>CAT Engineering</h3><a href="/engineering">All cases</a></div><div class="panel-body" id="cases"></div></div>
+        <div class="panel"><div class="panel-head"><h3 data-i18n>CAT Engineering</h3><a href="/engineering" data-i18n>All cases</a></div><div class="panel-body" id="cases"></div></div>
         <div class="panel">
-          <div class="panel-head"><h3>Ask the record</h3><span class="count" id="aiMode"></span></div>
+          <div class="panel-head"><h3 data-i18n>Ask the record</h3><span class="count" id="aiMode"></span></div>
           <div class="panel-body">
-            <div class="ask-log" id="askLog"><div class="bubble bot muted">Ask about a machine, a part or a pattern. It can also assign a task or warn a crew.</div></div>
-            <form class="row" id="askForm"><input class="input" id="askInput" placeholder="Which trucks have run hot this month?" autocomplete="off"><button class="btn primary">Ask</button></form>
+            <div class="ask-log" id="askLog"><div class="bubble bot muted" data-i18n>Ask about a machine, a part or a pattern. It can also assign a task or warn a crew.</div></div>
+            <form class="row" id="askForm"><input class="input" id="askInput" placeholder="Which trucks have run hot this month?" autocomplete="off" data-i18n-attr="placeholder"><button class="btn primary" data-i18n>Ask</button></form>
             <div class="chips" style="margin-top:10px" id="askChips"></div>
           </div>
         </div>
-        <div class="panel"><div class="panel-head"><h3>More</h3></div><div class="panel-body links" id="links"></div></div>
+        <div class="panel"><div class="panel-head"><h3 data-i18n>More</h3></div><div class="panel-body links" id="links"></div></div>
       </div>
     </div>
   </div>
+  <script src="/i18n/es.js"></script>
+  <script src="/i18n/hi.js"></script>
+  <script src="/js/i18n.js"></script>
   <script src="/js/common.js"></script>
   <script src="/js/dashboard.js"></script>
 </body>

@@ -2,24 +2,54 @@
 // machine's memory + crew alerts back in seconds.
 (function () {
   const { topbar, api, esc, ago, dateShort, dateTime, sevPill, statusPill, healthBar, md, toast, undoBar, connectStream, store, icon, machineIcon, emptyState, skeleton, ROLE, SOURCE_LABEL, REPORT_STATUS, modal,
-    clip, problemOf, metaLine, keyFacts, kv, keyRow, dropdown, toneOf, alertDetails, alertTitle } = CT;
+    clip, problemOf, metaLine, keyFacts, kv, keyRow, dropdown, toneOf, alertDetails, alertTitle, codeChips, diagnosisBlock, diagnosisCount, t } = CT;
   const $ = (id) => document.getElementById(id);
 
   const state = { unit: null, people: [], me: null, photo: null, listening: false, tts: store.get('tts', true), lastResult: null };
 
+  // Sample reports in the operator's language. Same order and same machine as the English buttons in operator.html.
+  const SAMPLES = {
+    es: [
+      { text: 'Otra vez fuga de aceite hidráulico en la manguera de la pluma, cerca del soporte del bastidor. Gotea bastante. Hace mucho calor hoy.', unit: 'EX-0412' },
+      { text: 'El motor se calienta mucho subiendo la rampa de acarreo. Se encendió la alarma de temperatura del refrigerante, código CID 110 FMI 15. Hoy hay mucho polvo.', unit: 'HT-0764' },
+      { text: 'Ruido de rechinido en la rueda guía de la oruga izquierda al girar. Está peor desde ayer.', unit: 'DZ-0107' },
+      { text: 'Terreno blando junto al borde de la zanja del lado norte. El cucharón casi se desliza. Mantengan las máquinas alejadas.', unit: 'EX-0519' },
+      { text: 'Acaba de encenderse la alarma de temperatura del refrigerante subiendo la rampa. ¿Qué debo hacer?', unit: 'HT-0764' },
+      { text: 'Ya arreglé la fuga de la manguera de la pluma: cambié la manguera y la redirigí lejos del soporte del bastidor.', unit: 'EX-0412' },
+      { text: 'Necesito un técnico aquí. La oruga izquierda se ve floja y la rueda guía rechina.', unit: 'DZ-0107' },
+      { text: '¿Cuándo es el próximo servicio de esta máquina?', unit: 'DZ-0107' },
+      { text: 'Corrección a mi último reporte: quise decir el cilindro del brazo, no el de la pluma.', unit: 'EX-0412' },
+      { text: 'Borra mi último reporte, lo envié por error.', unit: 'EX-0412' },
+      { text: 'Elimina el reporte sobre la fuga de la manguera de la pluma.', unit: 'EX-0412' },
+    ],
+    hi: [
+      { text: 'बूम होज़ से फिर हाइड्रोलिक तेल लीक हो रहा है, फ्रेम ब्रैकेट के पास से। लगातार टपक रहा है। आज बहुत गर्मी है।', unit: 'EX-0412' },
+      { text: 'हॉल रोड की चढ़ाई पर इंजन बहुत गर्म हो रहा है। कूलेंट टेम्परेचर की चेतावनी आ गई, कोड CID 110 FMI 15। आज बहुत धूल है।', unit: 'HT-0764' },
+      { text: 'मोड़ लेते समय बाएँ ट्रैक के आइडलर से घिसाव जैसी आवाज़ आ रही है। कल से लगातार बिगड़ रही है।', unit: 'DZ-0107' },
+      { text: 'उत्तर तरफ खाई के किनारे ज़मीन नरम है। बकेट लगभग फिसल गई। मशीनों को किनारे से दूर रखें।', unit: 'EX-0519' },
+      { text: 'रैंप चढ़ते समय अभी कूलेंट टेम्परेचर की चेतावनी आ गई। मुझे क्या करना चाहिए?', unit: 'HT-0764' },
+      { text: 'बूम होज़ का लीक ठीक कर दिया। होज़ बदल दी और उसे फ्रेम ब्रैकेट से दूर कर दिया।', unit: 'EX-0412' },
+      { text: 'यहाँ एक टेक्नीशियन भेजो। बायाँ ट्रैक ढीला लग रहा है और आइडलर से आवाज़ आ रही है।', unit: 'DZ-0107' },
+      { text: 'इस मशीन की अगली सर्विस कब है?', unit: 'DZ-0107' },
+      { text: 'मेरी पिछली रिपोर्ट में सुधार: मेरा मतलब स्टिक सिलेंडर था, बूम नहीं।', unit: 'EX-0412' },
+      { text: 'मेरी पिछली रिपोर्ट हटा दो, गलती से भेज दी थी।', unit: 'EX-0412' },
+      { text: 'बूम होज़ के लीक वाली रिपोर्ट हटा दो।', unit: 'EX-0412' },
+    ],
+  };
+
   // ---------- static chrome ----------
   $('top').innerHTML = topbar('/operator');
-  $('scanBtn').innerHTML = `${icon('qr')}<span>Scan</span>`;
-  $('photoBtn').innerHTML = `${icon('camera')} Add photo`;
-  $('submitBtn').innerHTML = `${icon('send')} Send to Cat Track`;
-  const renderTts = () => { $('ttsBtn').innerHTML = `${icon(state.tts ? 'speaker' : 'mute')}<span>${state.tts ? 'Reads replies aloud' : 'Replies muted'}</span>`; $('ttsBtn').setAttribute('aria-pressed', String(state.tts)); };
+  $('scanBtn').innerHTML = `${icon('qr')}<span>${t('Scan')}</span>`;
+  $('photoBtn').innerHTML = `${icon('camera')} ${t('Add photo')}`;
+  $('submitBtn').innerHTML = `${icon('send')} ${t('Send to Cat Track')}`;
+  const renderTts = () => { $('ttsBtn').innerHTML = `${icon(state.tts ? 'speaker' : 'mute')}<span>${state.tts ? t('Reads replies aloud') : t('Replies muted')}</span>`; $('ttsBtn').setAttribute('aria-pressed', String(state.tts)); };
   renderTts();
-  $('ttsBtn').onclick = () => { state.tts = !state.tts; store.set('tts', state.tts); renderTts(); if (!state.tts) window.speechSynthesis?.cancel(); toast(state.tts ? 'Spoken responses on' : 'Spoken responses off'); };
+  $('ttsBtn').onclick = () => { state.tts = !state.tts; store.set('tts', state.tts); renderTts(); if (!state.tts) window.speechSynthesis?.cancel(); toast(state.tts ? t('Spoken responses on') : t('Spoken responses off')); };
 
   // ---------- who is reporting (personalization) ----------
   function renderMe() {
     const p = state.me;
-    $('meChip').innerHTML = `${icon('user')}<span>${p ? `Reporting as <b>${esc(p.name)}</b>` : 'Who’s reporting?'}</span>${icon('chevron')}`;
+    $('meChip').innerHTML = `${icon('user')}<span>${p ? t('Reporting as <b>{name}</b>', { name: esc(p.name) }) : t('Who’s reporting?')}</span>${icon('chevron')}`;
   }
   async function loadPeople() {
     state.people = await api('/api/people');
@@ -30,12 +60,12 @@
   }
   $('meChip').onclick = () => {
     const field = state.people.filter((p) => ['operator', 'technician', 'site_manager', 'safety_officer'].includes(p.role));
-    const m = modal(`<h2>Who's reporting?</h2><p class="muted" style="margin-top:-4px">Your name goes on the record so the technician knows who to ask, and the advice you hear back matches your job.</p>
-      <div class="people-list">${field.map((p) => `<button data-id="${p.id}" class="${state.me?.id === p.id ? 'sel' : ''}"><span><b>${esc(p.name)}</b><br><span class="muted" style="font-size:13px">${ROLE[p.role]}${p.site_name ? ' · ' + esc(p.site_name) : ''}</span></span>${state.me?.id === p.id ? icon('check') : ''}</button>`).join('')}</div>`);
+    const m = modal(`<h2>${t("Who's reporting?")}</h2><p class="muted" style="margin-top:-4px">${t('Your name goes on the record so the technician knows who to ask, and the advice you hear back matches your job.')}</p>
+      <div class="people-list">${field.map((p) => `<button data-id="${p.id}" class="${state.me?.id === p.id ? 'sel' : ''}"><span><b>${esc(p.name)}</b><br><span class="muted" style="font-size:13px">${t(ROLE[p.role] || p.role)}${p.site_name ? ' · ' + esc(p.site_name) : ''}</span></span>${state.me?.id === p.id ? icon('check') : ''}</button>`).join('')}</div>`);
     m.el.querySelectorAll('button[data-id]').forEach((b) => b.onclick = () => {
       state.me = state.people.find((p) => p.id === b.dataset.id); store.set('me', state.me.id); renderMe(); m.close();
       if (hist.scope === 'mine') { hist.next = null; loadHistory(); }
-      toast(`Reporting as ${esc(state.me.name)}`, 'good');
+      toast(t('Reporting as {name}', { name: esc(state.me.name) }), 'good');
     });
   };
 
@@ -95,46 +125,46 @@
         <div class="unit-ico">${machineIcon(asset.family)}</div>
         <div class="grow">
           <div class="row spread" style="align-items:flex-start"><div class="unit-model">${esc(asset.model)}</div>${statusPill(asset.status)}</div>
-          <div class="unit-sub"><span class="id" style="color:var(--ink)">${esc(asset.id)}</span> · ${esc(asset.family)} · S/N <span class="mono">${esc(asset.serial)}</span></div>
+          <div class="unit-sub"><span class="id" style="color:var(--ink)">${esc(asset.id)}</span> · ${esc(t(asset.family))} · ${t('S/N')} <span class="mono">${esc(asset.serial)}</span></div>
           <div class="unit-sub">${esc(asset.site_name)}</div>
         </div>
       </div>
       <div style="margin-top:14px">
-        <div class="row spread" style="font-size:13px;margin-bottom:6px"><span class="muted">Health, from open issues and age</span><span class="mono">${asset.health}/100</span></div>
+        <div class="row spread" style="font-size:13px;margin-bottom:6px"><span class="muted">${t('Health, from open issues and age')}</span><span class="mono">${asset.health}/100</span></div>
         ${healthBar(asset.health)}
       </div>
       <div class="meta-grid">
-        <div class="meta"><div class="k">Hours</div><div class="v">${Math.round(asset.smu_hours).toLocaleString()}</div></div>
-        <div class="meta"><div class="k">Fuel</div><div class="v">${Math.round(asset.fuel_pct)}%</div></div>
-        <div class="meta"><div class="k">Open issues</div><div class="v">${alerts.length}</div></div>
-        <div class="meta"><div class="k">Last service</div><div class="v">${dateShort(asset.last_service_at)}</div></div>
-        <div class="meta"><div class="k">Since PM</div><div class="v">${since != null ? since + ' h' : '—'}</div></div>
-        <div class="meta"><div class="k">On record</div><div class="v"><a href="#history" style="color:inherit">${state.unit.stats.total} entries</a></div></div>
+        <div class="meta"><div class="k">${t('Hours')}</div><div class="v">${Math.round(asset.smu_hours).toLocaleString(CT.locale)}</div></div>
+        <div class="meta"><div class="k">${t('Fuel')}</div><div class="v">${Math.round(asset.fuel_pct)}%</div></div>
+        <div class="meta"><div class="k">${t('Open issues')}</div><div class="v">${alerts.length}</div></div>
+        <div class="meta"><div class="k">${t('Last service')}</div><div class="v">${dateShort(asset.last_service_at)}</div></div>
+        <div class="meta"><div class="k">${t('Since PM')}</div><div class="v">${since != null ? t('{n} h', { n: since }) : '—'}</div></div>
+        <div class="meta"><div class="k">${t('On record')}</div><div class="v"><a href="#history" style="color:inherit">${state.unit.stats.total === 1 ? t('1 entry') : t('{n} entries', { n: state.unit.stats.total })}</a></div></div>
       </div>
       <div style="margin-top:12px">
-        ${alerts.length ? dropdown(`Open issues on ${esc(asset.id)}`, alerts.map((a) => `<div class="issue-line">${sevPill(a.severity)}<span>${esc(alertTitle(a))}</span><span class="faint mono">${ago(a.created_at)}</span></div>`).join(''), { count: alerts.length }) : ''}
-        ${dropdown('What this machine remembers', mem.length ? `<ul class="mem-list">${mem.map((m) => `<li class="${m.level}">${icon(m.kind === 'fleet' ? 'graph' : m.kind === 'bulletin' ? 'wrench' : m.kind === 'pattern' ? 'alert' : m.kind === 'document' ? 'file' : 'history')}<span>${esc(m.text.replace(/ \[D\d+\]$/, ''))}</span></li>`).join('')}</ul>` : '<div class="muted" style="font-size:14px">Nothing unusual on record for this machine.</div>', { count: mem.length })}
+        ${alerts.length ? dropdown(t('Open issues on {id}', { id: esc(asset.id) }), alerts.map((a) => `<div class="issue-line">${sevPill(a.severity)}<span>${esc(alertTitle(a))}</span><span class="faint mono">${ago(a.created_at)}</span></div>`).join(''), { count: alerts.length }) : ''}
+        ${dropdown(t('What this machine remembers'), mem.length ? `<ul class="mem-list">${mem.map((m) => `<li class="${m.level}">${icon(m.kind === 'fleet' ? 'graph' : m.kind === 'bulletin' ? 'wrench' : m.kind === 'pattern' ? 'alert' : m.kind === 'document' ? 'file' : 'history')}<span>${esc(m.text.replace(/ \[D\d+\]$/, ''))}</span></li>`).join('')}</ul>` : `<div class="muted" style="font-size:14px">${t('Nothing unusual on record for this machine.')}</div>`, { count: mem.length })}
       </div>
-      <div class="row spread wrap" style="margin-top:14px;font-size:14px"><span class="muted">Assigned to ${esc(asset.operator_name || 'nobody yet')}</span><a href="/asset?id=${encodeURIComponent(asset.id)}">Full history for ${esc(asset.id)}</a></div>`;
+      <div class="row spread wrap" style="margin-top:14px;font-size:14px"><span class="muted">${t('Assigned to {name}', { name: esc(asset.operator_name || t('nobody yet')) })}</span><a href="/asset?id=${encodeURIComponent(asset.id)}">${t('Full history for {id}', { id: esc(asset.id) })}</a></div>`;
   }
 
   function renderNoUnit() {
     $('unitCard').innerHTML = `<div class="nounit" style="padding:0"><div class="tag-art">${icon('qr')}</div><div>
-      <div style="font-weight:600">Which machine are you on?</div>
-      <div class="muted" style="font-size:14px;margin-top:4px">There’s a Cat Track tag inside the cab door. Tap <b style="color:var(--ink)">Scan</b> and point your camera at it, or type the unit number printed under the code. It looks like <span class="id" style="color:var(--ink)">EX-0412</span>.</div></div></div>`;
-    $('feed').innerHTML = emptyState({ icon: 'pin', title: 'No job site yet', body: 'Alerts for the machine’s site appear here once you pick a machine.' });
-    $('histList').innerHTML = emptyState({ icon: 'history', title: 'No machine picked', body: 'Once you pick a machine, everything reported on it shows up here, newest first.' });
+      <div style="font-weight:600">${t('Which machine are you on?')}</div>
+      <div class="muted" style="font-size:14px;margin-top:4px">${t('There’s a Cat Track tag inside the cab door. Tap {scan} and point your camera at it, or type the unit number printed under the code. It looks like {example}.', { scan: `<b style="color:var(--ink)">${t('Scan')}</b>`, example: '<span class="id" style="color:var(--ink)">EX-0412</span>' })}</div></div></div>`;
+    $('feed').innerHTML = emptyState({ icon: 'pin', title: t('No job site yet'), body: t('Alerts for the machine’s site appear here once you pick a machine.') });
+    $('histList').innerHTML = emptyState({ icon: 'history', title: t('No machine picked'), body: t('Once you pick a machine, everything reported on it shows up here, newest first.') });
   }
   let allAssets = null;
   async function renderNotFound(raw, message) {
     const typed = String(raw).toUpperCase();
-    $('unitCard').innerHTML = emptyState({ icon: 'search', error: true, title: `No machine called “${esc(typed)}”`, body: `${esc(message.startsWith('Unknown') ? 'It isn’t in the fleet record. Check the tag — unit numbers are two letters and four digits.' : message)}` });
+    $('unitCard').innerHTML = emptyState({ icon: 'search', error: true, title: t('No machine called “{id}”', { id: esc(typed) }), body: `${esc(message.startsWith('Unknown') ? t('It isn’t in the fleet record. Check the tag — unit numbers are two letters and four digits.') : message)}` });
     try {
       allAssets ||= await api('/api/assets');
       const digits = typed.replace(/\D/g, '');
       const near = allAssets.filter((a) => (digits && a.id.includes(digits.slice(-3))) || a.id.startsWith(typed.slice(0, 2))).slice(0, 4);
       if (near.length) {
-        $('unitCard').insertAdjacentHTML('beforeend', `<div class="row wrap" style="padding:0 2px 6px 48px"><span class="muted" style="font-size:13px">Did you mean</span>${near.map((a) => `<button class="chip" data-near="${esc(a.id)}"><span class="k">${esc(a.model)}</span><span class="id">${esc(a.id)}</span></button>`).join('')}</div>`);
+        $('unitCard').insertAdjacentHTML('beforeend', `<div class="row wrap" style="padding:0 2px 6px 48px"><span class="muted" style="font-size:13px">${t('Did you mean')}</span>${near.map((a) => `<button class="chip" data-near="${esc(a.id)}"><span class="k">${esc(a.model)}</span><span class="id">${esc(a.id)}</span></button>`).join('')}</div>`);
         $('unitCard').querySelectorAll('[data-near]').forEach((b) => b.onclick = () => { unitInput.value = b.dataset.near; loadUnit(b.dataset.near); });
       }
     } catch { /* suggestions are optional */ }
@@ -164,7 +194,7 @@
     const m = String(text).match(/[?&]unit=([A-Za-z0-9-]+)/i);
     const id = m ? m[1] : String(text).trim();
     unitInput.value = id.toUpperCase();
-    toast(`Scanned ${esc(id.toUpperCase())}`, 'good');
+    toast(t('Scanned {id}', { id: esc(id.toUpperCase()) }), 'good');
     loadUnit(id);
   }
   async function decodeImageFile(file) {
@@ -174,30 +204,30 @@
     const ctx = c.getContext('2d'); ctx.drawImage(img, 0, 0, c.width, c.height);
     const d = ctx.getImageData(0, 0, c.width, c.height);
     const code = window.jsQR && window.jsQR(d.data, d.width, d.height, { inversionAttempts: 'attemptBoth' });
-    if (code && code.data) handleQr(code.data); else toast('No QR code found in that photo — try again closer.', 'high');
+    if (code && code.data) handleQr(code.data); else toast(t('No QR code found in that photo — try again closer.'), 'high');
   }
   async function startScan() {
     scanEl = document.createElement('div');
     scanEl.className = 'scanner';
     scanEl.innerHTML = `<video playsinline muted autoplay></video><div class="frame"></div>
-      <div class="bar"><b style="font-family:var(--font-cond);font-size:20px;letter-spacing:.06em">SCAN MACHINE TAG</b><button class="btn" id="scanClose">${icon('x')} Close</button></div>
-      <div class="msg" id="scanMsg">Point at the QR tag on the machine</div>`;
+      <div class="bar"><b style="font-family:var(--font-cond);font-size:20px;letter-spacing:.06em">${t('SCAN MACHINE TAG')}</b><button class="btn" id="scanClose">${icon('x')} ${t('Close')}</button></div>
+      <div class="msg" id="scanMsg">${t('Point at the QR tag on the machine')}</div>`;
     document.body.appendChild(scanEl);
     scanEl.querySelector('#scanClose').onclick = stopScan;
     const msg = scanEl.querySelector('#scanMsg');
     const photoFallback = () => {
-      msg.innerHTML = `<label class="btn primary" style="margin-top:8px">${icon('camera')} Take a photo of the tag<input type="file" accept="image/*" capture="environment" class="hidden" id="qrFile"></label>`;
-      scanEl.querySelector('#qrFile').onchange = (e) => { const f = e.target.files[0]; if (f) decodeImageFile(f).catch(() => toast('Could not read that photo', 'high')); };
+      msg.innerHTML = `<label class="btn primary" style="margin-top:8px">${icon('camera')} ${t('Take a photo of the tag')}<input type="file" accept="image/*" capture="environment" class="hidden" id="qrFile"></label>`;
+      scanEl.querySelector('#qrFile').onchange = (e) => { const f = e.target.files[0]; if (f) decodeImageFile(f).catch(() => toast(t('Could not read that photo'), 'high')); };
     };
     if (!navigator.mediaDevices?.getUserMedia) {
-      msg.innerHTML = 'Live camera needs HTTPS. ';
+      msg.innerHTML = `${t('Live camera needs HTTPS.')} `;
       photoFallback();
       return;
     }
     try {
       scanStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false });
     } catch (err) {
-      msg.textContent = err.name === 'NotAllowedError' ? 'Camera permission denied. ' : 'Camera unavailable. ';
+      msg.textContent = `${err.name === 'NotAllowedError' ? t('Camera permission denied.') : t('Camera unavailable.')} `;
       photoFallback();
       return;
     }
@@ -249,32 +279,32 @@
   let mode = SR ? 'browser' : 'none';
   let usedVoice = false;
   state.voice = 'idle'; // idle | starting | recording | transcribing
-  const rec = { stream: null, recorder: null, chunks: [], ctx: null, raf: 0, started: 0, timer: 0, autoStop: 0, speechSeen: false, quietSince: 0, lastBlob: null, sr: null, srBase: '' };
+  const rec = { stream: null, recorder: null, chunks: [], ctx: null, raf: 0, started: 0, timer: 0, autoStop: 0, speechSeen: false, quietSince: 0, lastBlob: null, sr: null, srBase: '', keepHint: false };
 
   const joinText = (...parts) => parts.map((p) => (p || '').trim()).filter(Boolean).join(' ');
   const hint = (html) => { $('dictateHint').innerHTML = html; };
   const clock = () => { const s = Math.floor((Date.now() - rec.started) / 1000); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; };
   function idleHint() {
-    if (mode !== 'none') hint('Tap, then say what you see, hear or smell. Tap again when you’re done.');
-    else if (!window.isSecureContext) hint('The microphone only works on the secure (https) link. You can type below.');
-    else hint('This browser can’t use the microphone here. Type below, or use the mic key on your keyboard.');
+    if (mode !== 'none') hint(t('Tap, then say what you see, hear or smell. Tap again when you’re done.'));
+    else if (!window.isSecureContext) hint(t('The microphone only works on the secure (https) link. You can type below.'));
+    else hint(t('This browser can’t use the microphone here. Type below, or use the mic key on your keyboard.'));
   }
   function renderDictate() {
     const v = state.voice;
     dictateBtn.classList.toggle('listening', v === 'recording');
     dictateBtn.classList.toggle('busy', v === 'starting' || v === 'transcribing');
     dictateBtn.disabled = v === 'starting' || v === 'transcribing' || mode === 'none';
-    const label = v === 'recording' ? `Tap to stop · ${clock()}` : v === 'transcribing' ? 'Writing it down' : v === 'starting' ? 'Opening mic' : mode === 'none' ? 'Type below' : 'Tap to talk';
+    const label = v === 'recording' ? t('Tap to stop · {time}', { time: clock() }) : v === 'transcribing' ? t('Writing it down') : v === 'starting' ? t('Opening mic') : mode === 'none' ? t('Type below') : t('Tap to talk');
     dictateBtn.innerHTML = `${icon(v === 'recording' ? 'stop' : 'mic')}<span class="lab">${label}</span>`;
-    dictateBtn.setAttribute('aria-label', v === 'recording' ? 'Stop recording' : 'Start recording');
+    dictateBtn.setAttribute('aria-label', v === 'recording' ? t('Stop recording') : t('Start recording'));
     updateSubmit();
   }
   function micError(err) {
     const n = err?.name || '';
-    if (n === 'NotAllowedError' || n === 'SecurityError') return 'Microphone access is blocked. Allow it for this site in the browser settings (on iPhone: Settings › Safari › Microphone), then tap again.';
-    if (n === 'NotFoundError' || n === 'OverconstrainedError') return 'No microphone found on this device.';
-    if (n === 'NotReadableError' || n === 'AbortError') return 'The microphone is busy in another app (a call or voice memo?). Close it and tap again.';
-    return `Couldn’t open the microphone: ${esc(err?.message || n || 'unknown error')}`;
+    if (n === 'NotAllowedError' || n === 'SecurityError') return t('Microphone access is blocked. Allow it for this site in the browser settings (on iPhone: Settings › Safari › Microphone), then tap again.');
+    if (n === 'NotFoundError' || n === 'OverconstrainedError') return t('No microphone found on this device.');
+    if (n === 'NotReadableError' || n === 'AbortError') return t('The microphone is busy in another app (a call or voice memo?). Close it and tap again.');
+    return t('Couldn’t open the microphone: {error}', { error: esc(err?.message || n || t('unknown error')) });
   }
 
   /* ----- 1. record, then transcribe on the server ----- */
@@ -306,21 +336,21 @@
     if (!recorder) {
       stream.getTracks().forEach((t) => t.stop()); try { ctx?.close(); } catch { /* ignore */ }
       mode = SR ? 'browser' : 'none'; state.voice = 'idle'; renderDictate();
-      hint(SR ? 'Recording isn’t supported here, so the browser will listen instead. Tap again.' : 'This browser can’t record audio. Type your report below.');
+      hint(SR ? t('Recording isn’t supported here, so the browser will listen instead. Tap again.') : t('This browser can’t record audio. Type your report below.'));
       return;
     }
     Object.assign(rec, { stream, recorder, ctx, chunks: [], started: Date.now(), speechSeen: false, quietSince: 0 });
     recorder.ondataavailable = (e) => { if (e.data && e.data.size) rec.chunks.push(e.data); };
     recorder.onstop = onRecordingStopped;
-    recorder.onerror = (e) => { hint(`Recording stopped: ${esc(e.error?.message || 'unknown error')}`); stopVoice(); };
+    recorder.onerror = (e) => { hint(t('Recording stopped: {error}', { error: esc(e.error?.message || t('unknown error')) })); stopVoice(); };
     recorder.start(1000); // a chunk every second, so nothing is lost if the phone cuts it short
     startMeter();
     state.voice = 'recording';
-    rec.timer = setInterval(() => { const lab = dictateBtn.querySelector('.lab'); if (lab) lab.textContent = `Tap to stop · ${clock()}`; }, 250);
+    rec.timer = setInterval(() => { const lab = dictateBtn.querySelector('.lab'); if (lab) lab.textContent = t('Tap to stop · {time}', { time: clock() }); }, 250);
     rec.autoStop = setTimeout(stopVoice, 120_000);
     navigator.vibrate?.(25);
     renderDictate();
-    hint('Listening. Tap again when you’re done; it also stops by itself after a pause.');
+    hint(t('Listening. Tap again when you’re done; it also stops by itself after a pause.'));
   }
   // Ring around the button follows your voice, so you can see the mic is hearing you.
   // A pause of 3.5 s after speaking stops the recording, so gloves can stay on.
@@ -361,26 +391,26 @@
     const ms = Date.now() - rec.started;
     const blob = new Blob(rec.chunks, { type: rec.recorder?.mimeType || 'audio/webm' });
     rec.chunks = [];
-    if (ms < 700 || blob.size < 1000) { state.voice = 'idle'; renderDictate(); hint('That was too short. Tap, talk, then tap again.'); return; }
+    if (ms < 700 || blob.size < 1000) { state.voice = 'idle'; renderDictate(); hint(t('That was too short. Tap, talk, then tap again.')); return; }
     rec.lastBlob = blob;
     await sendForText(blob);
   }
   async function sendForText(blob) {
     state.voice = 'transcribing'; renderDictate();
-    hint('Writing down what you said…');
+    hint(t('Writing down what you said…'));
     try {
       let res;
-      try { res = await fetch('/api/transcribe', { method: 'POST', headers: { 'Content-Type': blob.type || 'audio/webm', 'ngrok-skip-browser-warning': '1' }, body: blob }); }
-      catch { throw new Error('No signal, so the recording couldn’t be sent.'); }
+      try { res = await fetch(`/api/transcribe?lang=${encodeURIComponent(CT.lang)}`, { method: 'POST', headers: { 'Content-Type': blob.type || 'audio/webm', 'ngrok-skip-browser-warning': '1' }, body: blob }); }
+      catch { throw new Error(t('No signal, so the recording couldn’t be sent.')); }
       let data = null;
       try { data = await res.json(); } catch { /* not JSON */ }
-      if (!res.ok) throw new Error(data?.error || `The server couldn’t transcribe it (${res.status}).`);
-      if (!data.text) { hint('Didn’t catch any words. Move away from the engine noise and try again.'); rec.lastBlob = null; return; }
+      if (!res.ok) throw new Error(data?.error || t('The server couldn’t transcribe it ({status}).', { status: res.status }));
+      if (!data.text) { hint(t('Didn’t catch any words. Move away from the engine noise and try again.')); rec.lastBlob = null; return; }
       reportText.value = joinText(reportText.value, data.text);
       usedVoice = true; rec.lastBlob = null;
-      hint('Got it. Fix anything it misheard, then send.');
+      hint(t('Got it. Fix anything it misheard, then send.'));
     } catch (err) {
-      hint(`${esc(err.message)} <button class="btn sm" type="button" id="retryVoice">Try again</button>`);
+      hint(`${esc(err.message)} <button class="btn sm" type="button" id="retryVoice">${t('Try again')}</button>`);
       $('retryVoice')?.addEventListener('click', () => { if (rec.lastBlob) sendForText(rec.lastBlob); });
     } finally {
       if (state.voice === 'transcribing') state.voice = 'idle';
@@ -393,7 +423,7 @@
     window.speechSynthesis?.cancel();
     const sr = new SR();
     rec.sr = sr;
-    sr.lang = 'en-US';
+    sr.lang = CT.speech;
     sr.interimResults = true;
     // Phones repeat or never finish results in continuous mode; one phrase at a time, restarted, is reliable.
     sr.continuous = !isPhone;
@@ -411,13 +441,14 @@
       reportText.value = joinText(rec.srBase, finalT, interim);
       if (finalT && !sr.continuous) rec.srBase = reportText.value;
       usedVoice = true;
-      hint(interim ? `<span class="interim">${esc(interim)}</span>` : 'Listening…');
+      hint(interim ? `<span class="interim">${esc(interim)}</span>` : t('Listening…'));
       updateSubmit();
     };
     sr.onerror = (e) => {
       if (e.error === 'no-speech' || e.error === 'aborted') return;
       const msgs = { 'not-allowed': 'Microphone access is blocked. Allow it for this site and tap again.', 'service-not-allowed': 'Speech recognition is off on this device (on iPhone, turn on Siri & Dictation). You can type instead.', network: 'Speech recognition needs a network connection.', 'audio-capture': 'No microphone found.' };
-      hint(msgs[e.error] || `Voice error: ${esc(e.error)}`);
+      rec.keepHint = true; // onend must not replace this; the wording is translated, so it can't be matched by text
+      hint(msgs[e.error] ? t(msgs[e.error]) : t('Voice error: {error}', { error: esc(e.error) }));
       state.voice = 'idle'; renderDictate();
     };
     sr.onend = () => {
@@ -427,18 +458,19 @@
         setTimeout(() => { if (state.voice !== 'recording') return; try { sr.start(); } catch { stopVoice(); } }, 250);
         return;
       }
-      if (!/blocked|off on|needs|found|error/i.test($('dictateHint').textContent)) hint(reportText.value.trim() ? 'Got it. Fix anything it misheard, then send.' : 'Didn’t catch anything. Move away from the engine noise and try again.');
+      if (!rec.keepHint) hint(reportText.value.trim() ? t('Got it. Fix anything it misheard, then send.') : t('Didn’t catch anything. Move away from the engine noise and try again.'));
       updateSubmit();
     };
     try {
       sr.start();
+      rec.keepHint = false;
       rec.started = Date.now();
       state.voice = 'recording';
-      rec.timer = setInterval(() => { const lab = dictateBtn.querySelector('.lab'); if (lab) lab.textContent = `Tap to stop · ${clock()}`; }, 250);
+      rec.timer = setInterval(() => { const lab = dictateBtn.querySelector('.lab'); if (lab) lab.textContent = t('Tap to stop · {time}', { time: clock() }); }, 250);
       rec.autoStop = setTimeout(stopVoice, 90_000);
       navigator.vibrate?.(25);
-      hint('Listening…');
-    } catch (err) { hint(`Couldn’t start the microphone: ${esc(err.message)}`); }
+      hint(t('Listening…'));
+    } catch (err) { rec.keepHint = true; hint(t('Couldn’t start the microphone: {error}', { error: esc(err.message) })); }
     renderDictate();
   }
 
@@ -472,9 +504,12 @@
 
   reportText.addEventListener('input', () => { if (state.voice === 'recording' && rec.sr) rec.srBase = reportText.value; updateSubmit(); });
   $('clearBtn').onclick = () => { reportText.value = ''; rec.srBase = ''; usedVoice = false; clearPhoto(); updateSubmit(); };
-  document.querySelectorAll('.examples .ex').forEach((b) => b.onclick = () => {
-    reportText.value = b.textContent.trim();
-    if (!state.unit) { const t = b.textContent; const pick = /idler|track/i.test(t) || /next service/i.test(t) ? 'DZ-0107' : /coolant|haul road|ramp/i.test(t) ? 'HT-0764' : /trench/i.test(t) ? 'EX-0519' : 'EX-0412'; unitInput.value = pick; loadUnit(pick); }
+  // The example buttons are written in English in operator.html; show them in the screen's language.
+  if (SAMPLES[CT.lang]) document.querySelectorAll('.examples .ex').forEach((b, i) => { if (SAMPLES[CT.lang][i]) b.textContent = SAMPLES[CT.lang][i].text; });
+  document.querySelectorAll('.examples .ex').forEach((b, i) => b.onclick = () => {
+    const s = SAMPLES[CT.lang]?.[i];
+    reportText.value = s ? s.text : b.textContent.trim();
+    if (!state.unit) { const pick = s ? s.unit : (() => { const x = b.textContent; return /idler|track/i.test(x) || /next service/i.test(x) ? 'DZ-0107' : /coolant|haul road|ramp/i.test(x) ? 'HT-0764' : /trench/i.test(x) ? 'EX-0519' : 'EX-0412'; })(); unitInput.value = pick; loadUnit(pick); }
     updateSubmit();
     b.closest('details').open = false;
     reportText.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -494,7 +529,7 @@
       state.photo = c.toDataURL('image/jpeg', 0.82);
       $('photoPrev').querySelector('img').src = state.photo;
       $('photoPrev').classList.remove('hidden');
-    } catch { toast('Could not read that image', 'high'); }
+    } catch { toast(t('Could not read that image'), 'high'); }
   };
 
   // ---------- submit ----------
@@ -502,7 +537,7 @@
     const talking = state.voice && state.voice !== 'idle';
     const ok = Boolean(state.unit) && reportText.value.trim().length > 2 && !talking;
     $('submitBtn').disabled = !ok;
-    $('submitBtn').innerHTML = !state.unit ? 'Pick a machine first' : talking ? (state.voice === 'transcribing' ? 'Writing down what you said…' : 'Tap the mic to finish first') : `${icon('send')} Send report on ${esc(state.unit.asset.id)}`;
+    $('submitBtn').innerHTML = !state.unit ? t('Pick a machine first') : talking ? (state.voice === 'transcribing' ? t('Writing down what you said…') : t('Tap the mic to finish first')) : `${icon('send')} ${t('Send report on {id}', { id: esc(state.unit.asset.id) })}`;
   }
 
   const STEPS = ['Working out what you need', 'Filing it under this machine', 'Checking what’s open and what’s happened before', 'Doing what you asked', 'Telling the people who need to know'];
@@ -511,7 +546,7 @@
   const plain = (t) => String(t || '').replace(/\*\*|\[[RD]\d+\]/g, '').replace(/\s+/g, ' ').trim();
   function runSteps() {
     $('progressBox').classList.remove('hidden');
-    $('steps').innerHTML = STEPS.map((s) => `<li><span class="b"></span>${s}</li>`).join('');
+    $('steps').innerHTML = STEPS.map((s) => `<li><span class="b"></span>${t(s)}</li>`).join('');
     const lis = [...$('steps').children];
     let i = 0;
     lis[0].classList.add('active');
@@ -531,7 +566,7 @@
     const finish = runSteps();
     $('progressBox').scrollIntoView({ behavior: 'smooth', block: 'center' });
     try {
-      const out = await api('/api/reports', { body: { assetId: state.unit.asset.id, personId: state.me?.id, text, source: usedVoice ? 'voice' : 'text', photo: state.photo } });
+      const out = await api('/api/reports', { body: { assetId: state.unit.asset.id, personId: state.me?.id, text, source: usedVoice ? 'voice' : 'text', photo: state.photo, lang: CT.lang } });
       out.said = text;
       finish();
       state.lastResult = out;
@@ -547,7 +582,7 @@
     } catch (err) {
       finish();
       $('progressBox').classList.add('hidden');
-      toast(`Couldn’t send: ${esc(err.message)} Your words are still in the box.`, 'high');
+      toast(t('Couldn’t send: {error} Your words are still in the box.', { error: esc(err.message) }), 'high');
     } finally {
       state.submitting = false;
       updateSubmit();
@@ -559,112 +594,119 @@
     try {
       window.speechSynthesis.cancel();
       const u = new SpeechSynthesisUtterance(text);
-      u.rate = 1.02; u.lang = 'en-US';
+      u.rate = 1.02; u.lang = CT.speech;
       window.speechSynthesis.speak(u);
     } catch { /* TTS unavailable */ }
   }
 
   function aiLine(out) {
     const ex = out.report?.extraction || out.extraction;
-    if (ex.ai_status === 'pending') return `<div class="ai-line">${icon('clock')}<span><b>${esc(out.aiLabel || 'The AI model')}</b> is reviewing this report. This card updates by itself when it’s done, usually within a minute. The crew has already been told.</span></div>`;
+    if (ex.ai_status === 'pending') return `<div class="ai-line">${icon('clock')}<span>${t('<b>{model}</b> is reviewing this report. This card updates by itself when it’s done, usually within a minute. The crew has already been told.', { model: esc(out.aiLabel || t('The AI model')) })}</span></div>`;
     if (ex.ai_status === 'reviewed' && ex.ai_seconds) { // a background review that finished after the card was shown
       const added = [...(out.aiAdded?.components || []), ...(out.aiAdded?.symptoms || []), ...(out.aiAdded?.fault_codes || []), ...(out.aiAdded?.conditions || [])];
-      return `<div class="ai-line">${icon('check')}<span>Reviewed by <b>${esc(ex.ai_label)}</b>${ex.ai_seconds ? ` in ${ex.ai_seconds}s` : ''}.${ex.rules_severity && ex.rules_severity !== ex.severity ? ` Severity raised from ${esc(ex.rules_severity)} to ${esc(ex.severity)}.` : ''}${added.length ? ` It also picked out: ${esc(added.join(', '))}.` : ''}</span></div>`;
+      return `<div class="ai-line">${icon('check')}<span>${ex.ai_seconds ? t('Reviewed by <b>{model}</b> in {n}s.', { model: esc(ex.ai_label), n: ex.ai_seconds }) : t('Reviewed by <b>{model}</b>.', { model: esc(ex.ai_label) })}${ex.rules_severity && ex.rules_severity !== ex.severity ? ` ${t('Severity raised from {from} to {to}.', { from: esc(t(ex.rules_severity)), to: esc(t(ex.severity)) })}` : ''}${added.length ? ` ${t('It also picked out: {items}.', { items: esc(added.map((x) => t(x)).join(', ')) })}` : ''}</span></div>`;
     }
-    if (ex.ai_status === 'failed') return `<div class="ai-line">${icon('alert')}<span>The AI review didn’t come back (${esc(ex.ai_error || 'no response')}). What you see is the rule engine’s read, which is what the crew received.</span></div>`;
+    if (ex.ai_status === 'failed') return `<div class="ai-line">${icon('alert')}<span>${t('The AI review didn’t come back ({error}). What you see is the rule engine’s read, which is what the crew received.', { error: esc(ex.ai_error || t('no response')) })}</span></div>`;
     return '';
   }
 
   function renderResult(out, { quiet = false } = {}) {
     if (out.intent === 'delete_report') return renderDeleteResult(out, { quiet });
     const ex = out.report?.extraction || out.extraction;
-    const chip = (label, items, cls = '') => (items || []).map((x) => `<span class="chip ${cls}"><span class="k">${label}</span>${esc(x)}</span>`).join('');
+    const chip = (label, items, cls = '') => (items || []).map((x) => `<span class="chip ${cls}"><span class="k">${t(label)}</span>${esc(t(x))}</span>`).join('');
     const fix = out.intent === 'resolved' ? null : out.fixes[0];
     const box = $('resultBox');
     const informational = ['resolved', 'question', 'routine_log'].includes(out.intent);
     const p = problemOf({ ...out.report, extraction: ex });
     const a = out.asset;
-    const todo = out.intent === 'question' ? '' : out.intent === 'resolved' ? (ex.resolution ? `Repair noted: ${ex.resolution}` : '') : ex.operator_guidance;
+    const todo = out.intent === 'question' ? '' : out.intent === 'resolved' ? (ex.resolution ? t('Repair noted: {text}', { text: ex.resolution }) : '') : ex.operator_guidance;
     const steps = out.advice || [];
     const route = (d) => `<div class="route">${icon(DID_ICON[d.kind] || 'check')}<div>${esc(d.text)}</div></div>`;
     const told = out.routed.reduce((n, r) => n + (r.count || 0), 0);
     const picked = chip('part', ex.components) + chip('symptom', ex.symptoms) + chip('code', ex.fault_codes) + chip('condition', ex.conditions) + chip('hazard', ex.safety_hazards, 'hazard');
     box.innerHTML = `
       <div class="result-banner ${out.intent === 'resolved' ? 'low' : esc(ex.severity)}">
-        <div class="row wrap" style="gap:6px">${out.intent ? `<span class="tag cat">${esc(INTENT[out.intent] || out.intent)}</span>` : ''}${ex.ai_status === 'pending' ? '<span class="tag">AI reviewing…</span>' : ''}</div>
+        <div class="row wrap" style="gap:6px">${out.intent ? `<span class="tag cat">${esc(t(INTENT[out.intent] || out.intent))}</span>` : ''}${ex.ai_status === 'pending' ? `<span class="tag">${t('AI reviewing…')}</span>` : ''}</div>
         <div class="h">${esc(p.title)}</div>
         ${keyFacts([
-          ['Machine', `${esc(a.id)} <span class="muted" style="font-weight:500">${esc(a.model)}</span>`],
-          ['Location', esc(a.site_name)],
-          ['Part', esc(p.part || '')],
-          ['Problem', esc(p.problem || p.hazard || '')],
-          ['Priority', informational ? '' : sevPill(ex.severity)],
-          ['Code', esc(p.code || '')],
-          ['When', 'Just now'],
+          [t('Machine'), `${esc(a.id)} <span class="muted" style="font-weight:500">${esc(a.model)}</span>`],
+          [t('Location'), esc(a.site_name)],
+          [t('Part'), esc(t(p.part || ''))],
+          [t('Problem'), esc(t(p.problem || p.hazard || ''))],
+          [t('Priority'), informational ? '' : sevPill(ex.severity)],
+          [t('Code'), (ex.fault_codes || []).length ? `<span class="code-plain" style="color:var(--ink)">${esc(ex.fault_codes.join(', '))}</span>` : ''],
+          [t('When'), out.report?.created_at ? esc(dateTime(out.report.created_at)) : t('Just now')],
         ])}
       </div>
-      ${out.needsChoice ? `<div class="res-sec" id="choice"><h4>${esc(out.needsChoice.prompt)}</h4>${out.needsChoice.options.map((o) => `<button class="pick" data-close="${o.id}"><b>${esc(alertTitle(o))}</b><div class="m">${metaLine([sevPill(o.severity), ago(o.created_at)])}</div></button>`).join('')}<button class="btn ghost sm" style="margin-top:8px" data-close="none">None of these</button></div>` : ''}
+      ${out.needsChoice ? `<div class="res-sec" id="choice"><h4>${esc(out.needsChoice.prompt)}</h4>${out.needsChoice.options.map((o) => `<button class="pick" data-close="${o.id}"><b>${esc(alertTitle(o))}</b><div class="m">${metaLine([sevPill(o.severity), ago(o.created_at)])}</div></button>`).join('')}<button class="btn ghost sm" style="margin-top:8px" data-close="none">${t('None of these')}</button></div>` : ''}
       <div class="res-dd">
-        ${out.answer ? dropdown('Answer', `<div class="md answer">${md(out.answer.text)}</div><div class="faint mono" style="font-size:11px;margin-top:8px">${out.answer.mode === 'llm' ? `answered by ${esc(out.answer.model || 'AI')} from this machine’s record` : 'answered from the record'}</div>`, { open: true }) : ''}
-        ${todo || steps.length ? dropdown(steps.length ? 'What to do next' : 'What to do', `${todo ? `<p class="guidance" style="margin:0 0 10px">${esc(todo)}</p>` : ''}${steps.length ? `<ol class="next-steps">${steps.map((x) => `<li>${esc(x)}</li>`).join('')}</ol>` : ''}`, { open: out.intent === 'request_advice' || ex.severity === 'critical', count: steps.length ? `${steps.length} steps` : null }) : ''}
-        ${out.did?.length ? dropdown('What Cat Track did', out.did.map(route).join(''), { count: out.did.length }) : ''}
-        ${informational && !out.routed.length ? '' : dropdown('Who’s been told', out.routed.length
-          ? out.routed.map((r) => `<div class="route">${icon(r.to === 'CAT Engineering' ? 'wrench' : 'alert')}<div><b>${esc(r.to)}</b><div class="muted" style="font-size:13px">${esc(r.detail || '')}</div></div></div>`).join('')
-          : `<div class="muted">${out.intent === 'update_existing' ? 'The people on the open issue see your update on it.' : 'Nobody new. It went on the machine’s record without paging anyone.'}</div>`, { count: told ? `${told} ${told === 1 ? 'person' : 'people'}` : 'nobody' })}
-        ${out.actions.length ? dropdown('Tasks created', out.actions.map((t) => `<div class="act"><span class="who">${esc(ROLE[t.assignee_role] || t.assignee_role)}</span><span>${esc(t.text)}</span></div>`).join(''), { count: out.actions.length }) : ''}
-        ${fix ? dropdown('What fixed this before', `<div class="fix-card">
+        ${ex.diagnosis ? dropdown(t('Diagnosis'), diagnosisBlock(ex.diagnosis, { assetId: a.id }), { open: true, count: diagnosisCount(ex.diagnosis) }) : ''}
+        ${out.answer ? dropdown(t('Answer'), `<div class="md answer">${md(out.answer.text)}</div><div class="faint mono" style="font-size:11px;margin-top:8px">${out.answer.mode === 'llm' ? t('answered by {model} from this machine’s record', { model: esc(out.answer.model || 'AI') }) : t('answered from the record')}</div>`, { open: true }) : ''}
+        ${todo || steps.length ? dropdown(steps.length ? t('What to do next') : t('What to do'), `${todo ? `<p class="guidance" style="margin:0 0 10px">${esc(todo)}</p>` : ''}${steps.length ? `<ol class="next-steps">${steps.map((x) => `<li>${esc(x)}</li>`).join('')}</ol>` : ''}`, { open: out.intent === 'request_advice' || ex.severity === 'critical', count: steps.length ? (steps.length === 1 ? t('1 step') : t('{n} steps', { n: steps.length })) : null }) : ''}
+        ${out.did?.length ? dropdown(t('What Cat Track did'), out.did.map(route).join(''), { count: out.did.length }) : ''}
+        ${informational && !out.routed.length ? '' : dropdown(t('Who’s been told'), out.routed.length
+          ? out.routed.map((r) => `<div class="route">${icon(r.kind === 'engineering' || r.to === 'CAT Engineering' ? 'wrench' : 'alert')}<div><b>${esc(t(r.to))}</b><div class="muted" style="font-size:13px">${esc(r.detail || '')}</div></div></div>`).join('')
+          : `<div class="muted">${out.intent === 'update_existing' ? t('The people on the open issue see your update on it.') : t('Nobody new. It went on the machine’s record without paging anyone.')}</div>`, { count: told ? (told === 1 ? t('1 person') : t('{n} people', { n: told })) : t('nobody') })}
+        ${out.actions.length ? dropdown(t('Tasks created'), out.actions.map((x) => `<div class="act"><span class="who">${esc(t(ROLE[x.assignee_role] || x.assignee_role))}</span><span>${esc(x.text)}</span></div>`).join(''), { count: out.actions.length }) : ''}
+        ${fix ? dropdown(t('What fixed this before'), `<div class="fix-card">
           <b>${esc(fix.title)}</b>
           ${fix.steps ? `<div class="muted" style="font-size:13px;margin-top:4px">${esc(fix.steps)}</div>` : ''}
           <div class="conf"><i style="width:${fix.confidence}%"></i></div>
-          <div class="muted" style="font-size:13px;margin-top:6px" id="fixStat">Worked ${fix.success} of ${fix.success + fix.fail} times on ${esc(a.model)} machines.</div>
-          <div class="row wrap" style="margin-top:10px"><span class="muted" style="font-size:13px">Tried it?</span><button class="btn sm" data-fb="1">${icon('thumbUp')} It worked</button><button class="btn sm" data-fb="0">${icon('thumbDown')} It didn’t</button></div>
-        </div>`, { count: `${fix.confidence}% success` }) : ''}
-        ${out.similar.length ? dropdown('Seen before', out.similar.slice(0, 3).map((x) => `<div class="sim"><div class="row spread"><span class="id">${esc(x.asset_id)}</span><span class="faint mono" style="font-size:12px">${dateShort(x.created_at)}</span></div><div>${esc(x.summary)}</div><div class="faint" style="font-size:12px;margin-top:2px">matched on ${esc(x.reasons.slice(0, 4).join(', '))}</div></div>`).join(''), { count: out.similar.length }) : ''}
-        ${(ex.likely_causes || []).length ? dropdown('Likely causes', ex.likely_causes.map((c) => `<div class="act"><span class="who">possible</span><span>${esc(c)}</span></div>`).join(''), { count: ex.likely_causes.length }) : ''}
-        ${dropdown('Details', kv([
-          ['You said', `<q>${esc(out.report.raw_text)}</q>`],
-          ['Summary', ex.summary !== p.title ? esc(ex.summary) : ''],
-          ['Picked out', picked ? `<div class="chips">${picked}</div>` : ''],
-          ['Read by', ex.ai_status === 'reviewed' || ex.ai_mode === 'llm' ? esc(ex.ai_label || 'AI') : 'rule engine'],
-          ['On the record', `${out.graph.newNodes} new ${out.graph.newNodes === 1 ? 'fact' : 'facts'}, ${out.graph.newEdges} new links, ${out.graph.reinforced} confirmed`],
-        ]) + aiLine(out) + (out.report.photo_path ? `<img src="${esc(out.report.photo_path)}" alt="Photo attached to this report" style="margin-top:12px;max-width:100%;border-radius:4px;border:1px solid var(--line)">` : ''))}
+          <div class="muted" style="font-size:13px;margin-top:6px" id="fixStat">${t('Worked {n} of {total} times on {model} machines.', { n: fix.success, total: fix.success + fix.fail, model: esc(a.model) })}</div>
+          <div class="row wrap" style="margin-top:10px"><span class="muted" style="font-size:13px">${t('Tried it?')}</span><button class="btn sm" data-fb="1">${icon('thumbUp')} ${t('It worked')}</button><button class="btn sm" data-fb="0">${icon('thumbDown')} ${t('It didn’t')}</button></div>
+        </div>`, { count: t('{n}% success', { n: fix.confidence }) }) : ''}
+        ${out.similar.length ? dropdown(t('Seen before'), out.similar.slice(0, 3).map((x) => `<div class="sim"><div class="row spread"><span class="id">${esc(x.asset_id)}</span><span class="faint mono" style="font-size:12px">${dateShort(x.created_at)}</span></div><div>${esc(x.summary)}</div><div class="faint" style="font-size:12px;margin-top:2px">${t('matched on {reasons}', { reasons: esc(x.reasons.slice(0, 4).map((r) => t(r)).join(', ')) })}</div></div>`).join(''), { count: out.similar.length }) : ''}
+        ${(ex.likely_causes || []).length ? dropdown(t('Likely causes'), ex.likely_causes.map((c) => `<div class="act"><span class="who">${t('possible')}</span><span>${esc(c)}</span></div>`).join(''), { count: ex.likely_causes.length }) : ''}
+        ${dropdown(t('Details'), kv([
+          [t('You said'), `<q>${esc(out.report.raw_text)}</q>`],
+          [t('Summary'), ex.summary !== p.title ? esc(ex.summary) : ''],
+          [t('Picked out'), picked ? `<div class="chips">${picked}</div>` : ''],
+          [t('Read by'), ex.ai_status === 'reviewed' || ex.ai_mode === 'llm' ? esc(ex.ai_label || 'AI') : t('rule engine')],
+          [t('On the record'), `${out.graph.newNodes === 1 ? t('1 new fact') : t('{n} new facts', { n: out.graph.newNodes })}, ${t('{n} new links', { n: out.graph.newEdges })}, ${t('{n} confirmed', { n: out.graph.reinforced })}`],
+        ]) + aiLine(out) + (out.report.photo_path ? `<img src="${esc(out.report.photo_path)}" alt="${t('Photo attached to this report')}" style="margin-top:12px;max-width:100%;border-radius:4px;border:1px solid var(--line)">` : ''))}
       </div>
-      <button class="btn block lg" style="margin-top:14px" id="newReport">${icon('mic')} Report something else</button>`;
+      <button class="btn block lg" style="margin-top:14px" id="newReport">${icon('mic')} ${t('Report something else')}</button>`;
     box.classList.remove('hidden');
     if (!quiet) box.scrollIntoView({ behavior: 'smooth', block: 'start' });
     box.querySelectorAll('[data-fb]').forEach((b) => b.onclick = async () => {
       try {
         const r = await api(`/api/fixes/${fix.id}/feedback`, { body: { worked: b.dataset.fb === '1', assetId: out.asset.id, reportId: out.report.id, personId: state.me?.id } });
-        box.querySelector('#fixStat').textContent = `Now worked ${r.fix.success} of ${r.fix.success + r.fix.fail} times. Thanks — the next crew will see your result.`;
+        box.querySelector('#fixStat').textContent = t('Now worked {n} of {total} times. Thanks — the next crew will see your result.', { n: r.fix.success, total: r.fix.success + r.fix.fail });
         box.querySelectorAll('[data-fb]').forEach((x) => { x.disabled = true; });
-        toast('Saved. This changes how the fix is ranked for everyone.', 'good');
+        toast(t('Saved. This changes how the fix is ranked for everyone.'), 'good');
       } catch (err) { toast(esc(err.message), 'high'); }
     });
     box.querySelector('#newReport').onclick = () => { box.classList.add('hidden'); $('reportBox').scrollIntoView({ behavior: 'smooth' }); };
     box.querySelectorAll('[data-close]').forEach((b) => b.onclick = async () => {
       const choice = box.querySelector('#choice');
-      if (b.dataset.close === 'none') { choice.innerHTML = '<div class="muted">Left everything open. Saved as a repair record on this machine.</div>'; return; }
+      if (b.dataset.close === 'none') { choice.innerHTML = `<div class="muted">${t('Left everything open. Saved as a repair record on this machine.')}</div>`; return; }
       box.querySelectorAll('[data-close]').forEach((x) => { x.disabled = true; });
       try {
         const r = await api(`/api/reports/${out.report.id}/resolve`, { body: { alertId: Number(b.dataset.close), personId: state.me?.id } });
-        choice.innerHTML = `<div class="route">${icon('check')}<div>Closed “${esc(alertTitle(r.alert))}”, with its tasks.${r.learnedFixId ? ' Your repair is saved as a known fix.' : ''}</div></div>`;
+        choice.innerHTML = `<div class="route">${icon('check')}<div>${t('Closed “{title}”, with its tasks.', { title: esc(alertTitle(r.alert)) })}${r.learnedFixId ? ` ${t('Your repair is saved as a known fix.')}` : ''}</div></div>`;
         out.needsChoice = null;
-        toast('Issue closed.', 'good');
+        toast(t('Issue closed.'), 'good');
         loadUnit(out.asset.id, { quiet: true });
       } catch (err) { toast(esc(err.message), 'high'); box.querySelectorAll('[data-close]').forEach((x) => { x.disabled = false; }); }
     });
     if (!quiet) {
+      const critical = ex.severity === 'critical' ? `${t('Critical.')} ` : '';
       const lead = out.intent === 'resolved'
-        ? (out.did?.find((d) => d.kind === 'resolved') ? `Done. ${out.did.find((d) => d.kind === 'resolved').text}` : out.needsChoice ? 'Got it. Which issue did you fix? Pick it on screen.' : 'Repair noted.')
+        ? (out.did?.find((d) => d.kind === 'resolved') ? t('Done. {text}', { text: out.did.find((d) => d.kind === 'resolved').text }) : out.needsChoice ? t('Got it. Which issue did you fix? Pick it on screen.') : t('Repair noted.'))
         : out.intent === 'question' && out.answer ? plain(out.answer.text).slice(0, 320)
-          : `${ex.severity === 'critical' ? 'Critical. ' : ''}${out.advice?.length ? `Here's what to do. ${out.advice.map((x, i) => `${i + 1}. ${x}`).join(' ')}` : ex.operator_guidance}`;
-      const tail = out.routed.length ? ` I've alerted ${out.routed.map((r) => r.to).join(' and ')}.` : out.did?.find((d) => d.kind === 'help') ? ` ${out.did.find((d) => d.kind === 'help').text}.` : '';
-      speak(`${lead}${tail}`);
+          : `${critical}${out.advice?.length ? `${t('Here’s what to do.')} ${out.advice.map((x, i) => `${i + 1}. ${x}`).join(' ')}` : ex.operator_guidance}`;
+      const tail = out.routed.length ? ` ${t('I’ve alerted {who}.', { who: out.routed.map((r) => t(r.to)).join(` ${t('and')} `) })}` : out.did?.find((d) => d.kind === 'help') ? ` ${out.did.find((d) => d.kind === 'help').text}.` : '';
+      // The diagnosis' fix, when it came from the record or the AI (standard checks are left to the screen).
+      const dg = ex.diagnosis;
+      const fixLine = out.intent !== 'resolved' && dg?.solution && dg.solution.source !== 'checklist'
+        ? ` ${dg.component?.name ? t('Likely the {part}.', { part: CT.lang === 'en' ? dg.component.name.toLowerCase() : t(dg.component.name) }) : ''} ${dg.solution.source === 'ai' ? t('Suggested fix: {fix}.', { fix: plain(dg.solution.title).replace(/\.$/, '') }) : t('Known fix: {fix}.', { fix: plain(dg.solution.title).replace(/\.$/, '') })}`.replace(/\s{2,}/g, ' ')
+        : '';
+      speak(`${lead}${fixLine}${tail}`);
     }
   }
 
   // ---------- "delete my last report" ----------
-  const whoWhen = (r) => metaLine([esc(r.person_name || SOURCE_LABEL[r.source] || ''), `<span title="${esc(dateTime(r.created_at))}">${ago(r.created_at)}</span>`]);
+  const whoWhen = (r) => metaLine([esc(r.person_name || t(SOURCE_LABEL[r.source] || '')), `<span title="${esc(dateTime(r.created_at))}">${ago(r.created_at)}</span>`]);
 
   function renderDeleteResult(out, { quiet = false } = {}) {
     const box = $('resultBox');
@@ -673,23 +715,23 @@
     const one = gone.length === 1 ? gone[0] : null;
     const others = (out.did || []).filter((d) => d.kind !== 'deleted');
     const route = (d) => `<div class="route">${icon(DID_ICON[d.kind] || 'check')}<div>${esc(d.text)}</div></div>`;
-    const head = one ? `Deleted: ${problemOf(one).title}` : gone.length ? `Deleted ${gone.length} reports` : choice?.confirm ? choice.prompt : choice ? 'Which report should go?' : out.undone ? 'Put back' : 'Nothing was deleted';
+    const head = one ? t('Deleted: {title}', { title: problemOf(one).title }) : gone.length ? t('Deleted {n} reports', { n: gone.length }) : choice?.confirm ? choice.prompt : choice ? t('Which report should go?') : out.undone ? t('Put back') : t('Nothing was deleted');
     box.innerHTML = `
       <div class="result-banner">
-        <div class="row wrap" style="gap:6px"><span class="tag cat">${INTENT.delete_report}</span></div>
+        <div class="row wrap" style="gap:6px"><span class="tag cat">${t(INTENT.delete_report)}</span></div>
         <div class="h">${esc(head)}</div>
-        ${one ? keyFacts([['Machine', esc(one.asset_id)], ['Part', esc(problemOf(one).part || '')], ['Priority', ['mechanical', 'safety'].includes(one.category) ? sevPill(one.severity) : ''], ['Reported', ago(one.created_at)], ['By', esc(one.person_name || SOURCE_LABEL[one.source] || '')]]) : ''}
+        ${one ? keyFacts([[t('Machine'), esc(one.asset_id)], [t('Part'), esc(t(problemOf(one).part || ''))], [t('Priority'), ['mechanical', 'safety'].includes(one.category) ? sevPill(one.severity) : ''], [t('Reported'), ago(one.created_at)], [t('By'), esc(one.person_name || t(SOURCE_LABEL[one.source] || ''))]]) : ''}
         ${!gone.length && !choice && out.did?.[0] ? `<div class="guidance">${esc(out.did[0].text)}</div>` : ''}
-        ${choice?.confirm ? '<div class="guidance">Nothing goes until you confirm.</div>' : ''}
+        ${choice?.confirm ? `<div class="guidance">${t('Nothing goes until you confirm.')}</div>` : ''}
       </div>
-      ${gone.length > 1 ? `<div class="res-sec">${gone.map((d) => keyRow({ tone: toneOf(d), title: esc(problemOf(d).title), meta: whoWhen(d), body: kv([['Said', `<q>${esc(d.raw_text)}</q>`]]) })).join('')}</div>` : ''}
-      ${gone.length ? `<button class="btn block" id="undoDelete" style="margin-top:12px">${icon('history')} Undo, put ${gone.length === 1 ? 'it' : 'them'} back</button>` : ''}
-      ${gone.length ? `<div class="res-dd" style="margin-top:12px">${one ? dropdown('What was said', `<q class="said">${esc(one.raw_text)}</q>`) : ''}${others.length ? dropdown('What else changed', others.map(route).join(''), { count: others.length }) : ''}</div>` : ''}
+      ${gone.length > 1 ? `<div class="res-sec">${gone.map((d) => keyRow({ tone: toneOf(d), title: esc(problemOf(d).title), meta: whoWhen(d), body: kv([[t('Said'), `<q>${esc(d.raw_text)}</q>`]]) })).join('')}</div>` : ''}
+      ${gone.length ? `<button class="btn block" id="undoDelete" style="margin-top:12px">${icon('history')} ${gone.length === 1 ? t('Undo, put it back') : t('Undo, put them back')}</button>` : ''}
+      ${gone.length ? `<div class="res-dd" style="margin-top:12px">${one ? dropdown(t('What was said'), `<q class="said">${esc(one.raw_text)}</q>`) : ''}${others.length ? dropdown(t('What else changed'), others.map(route).join(''), { count: others.length }) : ''}</div>` : ''}
       ${choice && !choice.confirm ? `<div class="res-sec" id="choice"><h4>${esc(choice.prompt)}</h4>${choice.options.map((o) => `<button class="pick" data-del="${o.id}"><b>${esc(problemOf(o).title)}</b><div class="m">${whoWhen(o)}</div></button>`).join('')}
-        <button class="btn ghost sm" style="margin-top:8px" data-keep>Keep everything</button></div>` : ''}
-      ${choice?.confirm ? `<div class="res-sec" id="choice"><h4>These would go</h4>${choice.options.map((o) => `<div class="issue-line"><span>${esc(problemOf(o).title)}</span><span class="faint">${whoWhen(o)}</span></div>`).join('')}
-        <div class="row wrap" style="margin-top:12px"><button class="btn danger" data-del-all>${icon('x')} Delete all ${choice.options.length}</button><button class="btn ghost" data-keep>Keep them</button></div></div>` : ''}
-      <button class="btn block lg" style="margin-top:14px" id="newReport">${icon('mic')} Report something else</button>`;
+        <button class="btn ghost sm" style="margin-top:8px" data-keep>${t('Keep everything')}</button></div>` : ''}
+      ${choice?.confirm ? `<div class="res-sec" id="choice"><h4>${t('These would go')}</h4>${choice.options.map((o) => `<div class="issue-line"><span>${esc(problemOf(o).title)}</span><span class="faint">${whoWhen(o)}</span></div>`).join('')}
+        <div class="row wrap" style="margin-top:12px"><button class="btn danger" data-del-all>${icon('x')} ${t('Delete all {n}', { n: choice.options.length })}</button><button class="btn ghost" data-keep>${t('Keep them')}</button></div></div>` : ''}
+      <button class="btn block lg" style="margin-top:14px" id="newReport">${icon('mic')} ${t('Report something else')}</button>`;
     box.classList.remove('hidden');
     if (!quiet) box.scrollIntoView({ behavior: 'smooth', block: 'start' });
     box.querySelector('#newReport').onclick = () => { box.classList.add('hidden'); $('reportBox').scrollIntoView({ behavior: 'smooth' }); };
@@ -697,9 +739,9 @@
       e.currentTarget.disabled = true;
       try {
         const r = await api('/api/reports/restore', { body: { ids: gone.map((d) => d.id), personId: state.me?.id } });
-        Object.assign(out, { deleted: [], needsChoice: null, undone: true, did: [{ kind: 'note', text: `${r.restored.length === 1 ? 'The report is' : `${r.restored.length} reports are`} back on the record, with ${r.restored.length === 1 ? 'its' : 'their'} alerts and links.` }] });
+        Object.assign(out, { deleted: [], needsChoice: null, undone: true, did: [{ kind: 'note', text: r.restored.length === 1 ? t('The report is back on the record, with its alerts and links.') : t('{n} reports are back on the record, with their alerts and links.', { n: r.restored.length }) }] });
         renderDeleteResult(out, { quiet: true });
-        toast('Put back on the record.', 'good');
+        toast(t('Put back on the record.'), 'good');
       } catch (err) { toast(esc(err.message), 'high'); e.currentTarget.disabled = false; }
     });
     const doDelete = async (ids) => {
@@ -708,20 +750,20 @@
         const r = await api('/api/reports/delete', { body: { ids, personId: state.me?.id, reason: out.said || '', via: 'voice' } });
         Object.assign(out, { deleted: r.deleted, did: r.did, needsChoice: null });
         renderDeleteResult(out, { quiet: true });
-        toast(`Deleted ${r.deleted.length === 1 ? 'the report' : `${r.deleted.length} reports`}.`, 'good');
+        toast(r.deleted.length === 1 ? t('Deleted the report.') : t('Deleted {n} reports.', { n: r.deleted.length }), 'good');
       } catch (err) { toast(esc(err.message), 'high'); box.querySelectorAll('[data-del],[data-del-all],[data-keep]').forEach((x) => { x.disabled = false; }); }
     };
     box.querySelectorAll('[data-del]').forEach((b) => b.onclick = () => doDelete([Number(b.dataset.del)]));
     box.querySelector('[data-del-all]')?.addEventListener('click', () => doDelete(choice.options.map((o) => o.id)));
     box.querySelector('[data-keep]')?.addEventListener('click', () => {
-      Object.assign(out, { needsChoice: null, did: [{ kind: 'note', text: 'Kept everything. Nothing was deleted.' }] });
+      Object.assign(out, { needsChoice: null, did: [{ kind: 'note', text: t('Kept everything. Nothing was deleted.') }] });
       renderDeleteResult(out, { quiet: true });
     });
     if (!quiet) {
-      speak(one ? `Deleted the report: ${plain(problemOf(one).title)}. Tap undo if that was the wrong one.`
-        : gone.length ? `Deleted ${gone.length} reports. Tap undo if that was wrong.`
-          : choice?.confirm ? `That would delete ${choice.options.length} reports. Confirm on screen if you mean it.`
-            : choice ? 'Which report should I delete? Pick it on screen.' : plain(out.did?.[0]?.text || 'Nothing was deleted.'));
+      speak(one ? t('Deleted the report: {title}. Tap undo if that was the wrong one.', { title: plain(problemOf(one).title) })
+        : gone.length ? t('Deleted {n} reports. Tap undo if that was wrong.', { n: gone.length })
+          : choice?.confirm ? t('That would delete {n} reports. Confirm on screen if you mean it.', { n: choice.options.length })
+            : choice ? t('Which report should I delete? Pick it on screen.') : plain(out.did?.[0]?.text || t('Nothing was deleted.')));
     }
   }
 
@@ -733,29 +775,30 @@
     return keyRow({
       tone: toneOf(r), attrs: `data-id="${r.id}"`,
       title: esc(p.title),
-      meta: metaLine([`<span title="${esc(dateTime(r.created_at))}">${ago(r.created_at)}</span>`, esc(r.person_name || SOURCE_LABEL[r.source] || r.source)]),
-      right: `${problem ? sevPill(r.severity) : ''}<span class="rep-status ${esc(r.status)}"><i></i>${esc(REPORT_STATUS[r.status] || r.status)}</span>`,
+      meta: metaLine([`<span title="${esc(dateTime(r.created_at))}">${esc(dateShort(r.created_at))} · ${ago(r.created_at)}</span>`, (r.extraction?.fault_codes || []).length ? `<span class="code-plain">${esc(r.extraction.fault_codes[0])}</span>` : '', esc(r.person_name || t(SOURCE_LABEL[r.source] || r.source))]),
+      right: `${problem ? sevPill(r.severity) : ''}<span class="rep-status ${esc(r.status)}"><i></i>${esc(t(REPORT_STATUS[r.status] || r.status))}</span>`,
       body: kv([
-        ['Said', `<q>${esc(r.raw_text)}</q>`],
-        ['Summary', r.summary !== p.title ? esc(r.summary) : ''],
-        ['Fault code', esc(p.code || '')],
-        ['Reported by', esc([r.person_name, (SOURCE_LABEL[r.source] || r.source).toLowerCase()].filter(Boolean).join(', '))],
-        ['When', esc(dateTime(r.created_at))],
-        ['What to do', problem ? esc(r.extraction?.operator_guidance || '') : ''],
-      ]) + `<div class="kr-actions"><button class="btn sm" type="button" data-rm="${r.id}">${icon('x')} Delete this report</button></div>`,
+        [t('Said'), `<q>${esc(r.raw_text)}</q>`],
+        [t('Summary'), r.summary !== p.title ? esc(r.summary) : ''],
+        [t('Fault code'), codeChips(r.extraction?.fault_codes || [], { assetId: r.asset_id })],
+        [t('Reported by'), esc([r.person_name, t(SOURCE_LABEL[r.source] || r.source).toLowerCase()].filter(Boolean).join(', '))],
+        [t('When'), esc(dateTime(r.created_at))],
+        [t('What to do'), problem && !r.extraction?.diagnosis ? esc(r.extraction?.operator_guidance || '') : ''],
+      ]) + (r.extraction?.diagnosis ? `<div style="margin-top:12px">${diagnosisBlock(r.extraction.diagnosis, { assetId: r.asset_id })}</div>` : '')
+        + `<div class="kr-actions"><button class="btn sm" type="button" data-rm="${r.id}">${icon('x')} ${t('Delete this report')}</button></div>`,
     });
   }
   function renderHistory() {
     if (!state.unit) return;
     const id = state.unit.asset.id;
-    $('histTitle').textContent = `Earlier reports on ${id}`;
+    $('histTitle').textContent = t('Earlier reports on {id}', { id });
     $('histScope').querySelectorAll('button').forEach((b) => b.classList.toggle('on', b.dataset.s === hist.scope));
-    $('histCount').textContent = hist.total ? `${hist.total} on record` : '';
+    $('histCount').textContent = hist.total ? t('{n} on record', { n: hist.total }) : '';
     const mine = hist.scope === 'mine';
     $('histList').innerHTML = hist.items.length ? hist.items.map(histRow).join('')
-      : emptyState({ icon: 'history', title: mine ? `Nothing from ${esc(state.me?.name.split(' ')[0] || 'you')} on ${esc(id)} yet` : `Nothing on record for ${esc(id)} yet`, body: mine ? 'Switch to Everyone to see what the rest of the crew reported.' : 'The first voice note, repair or sensor alarm on this machine starts its history.' });
-    $('histMore').innerHTML = hist.next ? `<button class="btn ghost sm" type="button" id="histMoreBtn" style="margin-top:8px">Show older reports</button>`
-      : hist.total > 6 ? `<a href="/reports?asset=${encodeURIComponent(id)}" style="display:inline-block;margin-top:10px;font-size:14px">Open ${esc(id)} in the report log</a>` : '';
+      : emptyState({ icon: 'history', title: mine ? t('Nothing from {name} on {id} yet', { name: esc(state.me?.name.split(' ')[0] || t('you')), id: esc(id) }) : t('Nothing on record for {id} yet', { id: esc(id) }), body: mine ? t('Switch to Everyone to see what the rest of the crew reported.') : t('The first voice note, repair or sensor alarm on this machine starts its history.') });
+    $('histMore').innerHTML = hist.next ? `<button class="btn ghost sm" type="button" id="histMoreBtn" style="margin-top:8px">${t('Show older reports')}</button>`
+      : hist.total > 6 ? `<a href="/reports?asset=${encodeURIComponent(id)}" style="display:inline-block;margin-top:10px;font-size:14px">${t('Open {id} in the report log', { id: esc(id) })}</a>` : '';
     $('histMoreBtn')?.addEventListener('click', () => loadHistory({ more: true }));
   }
   async function loadHistory({ more = false } = {}) {
@@ -774,20 +817,20 @@
       renderHistory();
       if (deleted) renderDeleted(deleted);
     } catch (err) {
-      if (seq === hist.seq && !more) $('histList').innerHTML = emptyState({ icon: 'wifiOff', error: true, title: 'Couldn’t load earlier reports', body: esc(err.message) });
+      if (seq === hist.seq && !more) $('histList').innerHTML = emptyState({ icon: 'wifiOff', error: true, title: t('Couldn’t load earlier reports'), body: esc(err.message) });
     }
   }
   function renderDeleted(rows) {
     const el = $('histDeleted');
     el.classList.toggle('hidden', !rows.length);
     if (!rows.length) return;
-    el.querySelector('summary').textContent = `Deleted from ${state.unit.asset.id} (${rows.length}${rows.length === 10 ? '+' : ''})`;
-    $('histDeletedList').innerHTML = rows.map((t) => keyRow({
+    el.querySelector('summary').textContent = t('Deleted from {id} ({n})', { id: state.unit.asset.id, n: `${rows.length}${rows.length === 10 ? '+' : ''}` });
+    $('histDeletedList').innerHTML = rows.map((x) => keyRow({
       tone: 'withdrawn',
-      title: esc(problemOf(t).title),
-      meta: metaLine([`deleted ${ago(t.deleted_at)}`, t.deleted_by_name ? `by ${esc(t.deleted_by_name)}` : '', t.via === 'voice' ? 'by voice' : '']),
-      body: kv([['Said', `<q>${esc(t.raw_text || '')}</q>`], ['Reported by', esc([t.person_name, ago(t.created_at)].filter(Boolean).join(', '))], ['Why deleted', t.reason ? `<q>${esc(t.reason)}</q>` : '']])
-        + `<div class="kr-actions"><button class="btn sm" type="button" data-restore="${t.id}">${icon('history')} Restore</button></div>`,
+      title: esc(problemOf(x).title),
+      meta: metaLine([t('deleted {when}', { when: ago(x.deleted_at) }), x.deleted_by_name ? t('by {name}', { name: esc(x.deleted_by_name) }) : '', x.via === 'voice' ? t('by voice') : '']),
+      body: kv([[t('Said'), `<q>${esc(x.raw_text || '')}</q>`], [t('Reported by'), esc([x.person_name, ago(x.created_at)].filter(Boolean).join(', '))], [t('Why deleted'), x.reason ? `<q>${esc(x.reason)}</q>` : '']])
+        + `<div class="kr-actions"><button class="btn sm" type="button" data-restore="${x.id}">${icon('history')} ${t('Restore')}</button></div>`,
     })).join('');
   }
   $('histScope').querySelectorAll('button').forEach((b) => b.onclick = () => { hist.scope = b.dataset.s; store.set('histScope', hist.scope); hist.next = null; hist.items = []; loadHistory(); });
@@ -799,14 +842,14 @@
       try {
         const r = await api('/api/reports/delete', { body: { ids: [id], personId: state.me?.id, via: 'manual' } });
         const d = r.deleted[0];
-        undoBar(`Deleted “${esc(clip(problemOf(d).title, 60))}”.`, async () => { await api('/api/reports/restore', { body: { ids: [id], personId: state.me?.id } }); toast('Put back on the record.', 'good'); });
+        undoBar(t('Deleted “{title}”.', { title: esc(clip(problemOf(d).title, 60)) }), async () => { await api('/api/reports/restore', { body: { ids: [id], personId: state.me?.id } }); toast(t('Put back on the record.'), 'good'); });
       } catch (err) { row.classList.remove('gone'); toast(esc(err.message), 'high'); }
       return;
     }
     const rs = e.target.closest('[data-restore]');
     if (rs) {
       rs.disabled = true;
-      try { await api('/api/reports/restore', { body: { ids: [Number(rs.dataset.restore)], personId: state.me?.id } }); toast('Put back on the record.', 'good'); }
+      try { await api('/api/reports/restore', { body: { ids: [Number(rs.dataset.restore)], personId: state.me?.id } }); toast(t('Put back on the record.'), 'good'); }
       catch (err) { rs.disabled = false; toast(esc(err.message), 'high'); }
     }
   });
@@ -820,28 +863,29 @@
     if (!out || $('resultBox').classList.contains('hidden')) return;
     out.report = report; out.extraction = report.extraction; out.aiAdded = added;
     renderResult(out, { quiet: true });
-    if (status === 'reviewed') toast(`${esc(report.extraction.ai_label)} finished reviewing your report.`, 'good');
+    if (status === 'reviewed') toast(t('{model} finished reviewing your report.', { model: esc(report.extraction.ai_label) }), 'good');
   }
+  const park = (map, key, ev) => { map.set(key, ev); if (map.size > 20) map.delete(map.keys().next().value); };
 
   // ---------- live site alerts ----------
   let feedAlerts = [];
   async function loadFeed() {
     if (!state.unit) return;
-    $('feedTitle').textContent = `Alerts at ${state.unit.asset.site_name}`;
+    $('feedTitle').textContent = t('Alerts at {site}', { site: state.unit.asset.site_name });
     $('feed').innerHTML = skeleton(2, 'block');
     try { feedAlerts = await api(`/api/alerts?site=${encodeURIComponent(state.unit.asset.site_id)}`); renderFeed(); } catch { /* keep old */ }
   }
   function renderFeed(flashId) {
-    $('feedCount').textContent = feedAlerts.length ? `${feedAlerts.length} open` : '';
+    $('feedCount').textContent = feedAlerts.length ? t('{n} open', { n: feedAlerts.length }) : '';
     $('feed').innerHTML = feedAlerts.length
       ? feedAlerts.slice(0, 8).map((a) => keyRow({
         tone: `${toneOf(a)} ${a.id === flashId ? 'flash' : ''}`,
         title: esc(alertTitle(a)),
-        meta: metaLine([a.asset_id ? `<span class="id">${esc(a.asset_id)}</span> ${esc(a.model || '')}` : 'Every machine of this model', `<span title="${esc(dateTime(a.created_at))}">${ago(a.created_at)}</span>`]),
+        meta: metaLine([a.asset_id ? `<span class="id">${esc(a.asset_id)}</span> ${esc(a.model || '')}` : t('Every machine of this model'), `<span title="${esc(dateTime(a.created_at))}">${ago(a.created_at)}</span>`]),
         right: a.kind === 'bulletin' ? '<span class="tag cat">CAT</span>' : sevPill(a.severity),
         body: alertDetails(a),
       })).join('')
-      : emptyState({ icon: 'shield', title: `Nothing open at ${esc(state.unit.asset.site_name)}`, body: 'When anyone on this site reports a problem, it shows up here within a second, and your phone buzzes.' });
+      : emptyState({ icon: 'shield', title: t('Nothing open at {site}', { site: esc(state.unit.asset.site_name) }), body: t('When anyone on this site reports a problem, it shows up here within a second, and your phone buzzes.') });
   }
 
   connectStream({
@@ -869,7 +913,7 @@
     'report-updated': (ev) => {
       if (state.unit && ev.report?.asset_id === state.unit.asset.id) softHistory();
       const out = state.lastResult;
-      if (!out || out.report?.id !== ev.reportId) { earlyUpdates.set(ev.reportId, ev); if (earlyUpdates.size > 20) earlyUpdates.delete(earlyUpdates.keys().next().value); return; }
+      if (!out || out.report?.id !== ev.reportId) { park(earlyUpdates, ev.reportId, ev); return; }
       applyReview(ev);
     },
   }, $('live'));
@@ -877,7 +921,7 @@
   // ---------- boot ----------
   renderRecent();
   updateSubmit();
-  loadPeople().catch(() => toast('Could not load crew list', 'high'));
+  loadPeople().catch(() => toast(t('Could not load crew list'), 'high'));
   const qs = new URLSearchParams(location.search).get('unit');
   if (qs) { unitInput.value = qs.toUpperCase(); loadUnit(qs, { quiet: true }); } else renderNoUnit();
 })();

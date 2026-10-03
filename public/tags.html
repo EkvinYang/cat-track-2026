@@ -30,24 +30,27 @@
   <div id="top"></div>
   <div class="page">
     <div class="row spread wrap noprint" style="margin-bottom:14px">
-      <div><div class="label">Setup</div><h1 style="margin-top:6px">Machine tags</h1><p class="muted" style="margin-top:8px;max-width:60ch">Print these and tape one inside each cab door. Scanning a tag, with the operator screen or a normal phone camera, opens the report screen for that machine.</p></div>
-      <div class="row"><span class="muted" style="font-size:13px" id="base"></span><button class="btn primary" onclick="window.print()">Print tags</button></div>
+      <div><div class="label" data-i18n>Setup</div><h1 style="margin-top:6px" data-i18n>Machine tags</h1><p class="muted" style="margin-top:8px;max-width:60ch" data-i18n>Print these and tape one inside each cab door. Scanning a tag, with the operator screen or a normal phone camera, opens the report screen for that machine.</p></div>
+      <div class="row"><span class="muted" style="font-size:13px" id="base"></span><button class="btn primary" onclick="window.print()" data-i18n>Print tags</button></div>
     </div>
     <div class="qtags" id="tags"></div>
   </div>
+  <script src="/i18n/es.js"></script>
+  <script src="/i18n/hi.js"></script>
+  <script src="/js/i18n.js"></script>
   <script src="/js/common.js"></script>
   <script>
     (async function () {
-      const { api, esc, topbar, connectStream } = CT;
+      const { api, esc, topbar, connectStream, t } = CT;
       document.getElementById('top').innerHTML = topbar('/tags');
       connectStream({}, document.getElementById('live'));
       const [assets, pub] = await Promise.all([api('/api/assets'), api('/api/public-url')]);
-      document.getElementById('base').textContent = `Links to ${pub.url}`;
+      document.getElementById('base').textContent = t('Links to {url}', { url: pub.url });
       document.getElementById('tags').innerHTML = assets.map((a) => {
         const url = `${pub.url}/operator?unit=${encodeURIComponent(a.id)}`;
         return `<div class="qtag"><div class="hd"><span>CAT TRACK</span><span>${esc(a.site_id)}</span></div>
-          <div class="bd"><img src="/api/qr.svg?data=${encodeURIComponent(url)}" alt="QR for ${esc(a.id)}"><div class="uid">${esc(a.id)}</div><div class="md">${esc(a.model)} ${esc(a.family)}</div></div>
-          <div class="ft">S/N ${esc(a.serial)} · scan to report a problem</div></div>`;
+          <div class="bd"><img src="/api/qr.svg?data=${encodeURIComponent(url)}" alt="${t('QR for {id}', { id: esc(a.id) })}"><div class="uid">${esc(a.id)}</div><div class="md">${esc(a.model)} ${esc(t(a.family))}</div></div>
+          <div class="ft">${t('S/N')} ${esc(a.serial)} · ${t('scan to report a problem')}</div></div>`;
       }).join('');
     })();
   </script>

@@ -47,30 +47,33 @@
     <div class="cols">
       <div class="stack">
         <div class="panel panel-pad">
-          <h3>What to watch</h3><div class="muted" style="font-size:13px;margin:2px 0 10px">Depends on who’s asking.</div>
-          <div class="tabs" id="roleTabs"><button data-r="operator" class="on">Operator</button><button data-r="technician">Technician</button><button data-r="fleet_manager">Fleet manager</button></div>
+          <h3 data-i18n>What to watch</h3><div class="muted" style="font-size:13px;margin:2px 0 10px" data-i18n>Depends on who’s asking.</div>
+          <div class="tabs" id="roleTabs"><button data-r="operator" class="on" data-i18n>Operator</button><button data-r="technician" data-i18n>Technician</button><button data-r="fleet_manager" data-i18n>Fleet manager</button></div>
           <div id="insights" style="margin-top:12px"></div>
         </div>
-        <div class="panel panel-pad"><h3 style="margin-bottom:6px">On record about this machine</h3><div id="memory"></div></div>
-        <div class="panel panel-pad"><h3 style="margin-bottom:8px">Still open</h3><div id="openItems"></div></div>
+        <div class="panel panel-pad"><h3 style="margin-bottom:6px" data-i18n>On record about this machine</h3><div id="memory"></div></div>
+        <div class="panel panel-pad"><h3 style="margin-bottom:8px" data-i18n>Still open</h3><div id="openItems"></div></div>
       </div>
       <div class="panel panel-pad">
-        <div class="row spread" style="margin-bottom:12px;align-items:baseline"><h3 style="font-family:var(--f-display);font-size:28px;font-weight:700">History</h3><span class="count mono muted" style="font-size:12px" id="tlCount"></span></div>
+        <div class="row spread" style="margin-bottom:12px;align-items:baseline"><h3 style="font-family:var(--f-display);font-size:28px;font-weight:700" data-i18n>History</h3><span class="count mono muted" style="font-size:12px" id="tlCount"></span></div>
         <div class="filters" id="filters"></div>
         <div id="timeline"></div>
       </div>
       <div class="stack">
         <div class="panel panel-pad">
-          <div class="row spread" style="margin-bottom:10px"><h3>Ask about this machine</h3><span class="mono muted" style="font-size:12px" id="aiMode"></span></div>
+          <div class="row spread" style="margin-bottom:10px"><h3 data-i18n>Ask about this machine</h3><span class="mono muted" style="font-size:12px" id="aiMode"></span></div>
           <div class="ask-log" id="askLog"></div>
-          <form class="row" id="askForm"><input class="input" id="askInput" placeholder="Has the boom hose been replaced before?" autocomplete="off"><button class="btn primary">Ask</button></form>
+          <form class="row" id="askForm"><input class="input" id="askInput" placeholder="Has the boom hose been replaced before?" autocomplete="off" data-i18n-attr="placeholder"><button class="btn primary" data-i18n>Ask</button></form>
           <div class="chips" style="margin-top:8px" id="askChips"></div>
         </div>
-        <div class="panel panel-pad"><div class="row spread" style="margin-bottom:8px"><h3>What it’s connected to</h3><a id="graphLink" href="/graph" style="font-size:13px">Whole fleet</a></div><div id="mini"></div></div>
+        <div class="panel panel-pad"><div class="row spread" style="margin-bottom:8px"><h3 data-i18n>What it’s connected to</h3><a id="graphLink" href="/graph" style="font-size:13px" data-i18n>Whole fleet</a></div><div id="mini"></div></div>
       </div>
     </div>
   </div>
   <script src="/vendor/vis-network/vis-network.min.js"></script>
+  <script src="/i18n/es.js"></script>
+  <script src="/i18n/hi.js"></script>
+  <script src="/js/i18n.js"></script>
   <script src="/js/common.js"></script>
   <script src="/js/asset.js"></script>
 </body>

@@ -2,10 +2,14 @@
 // field feedback, distilled long-term facts per asset, and role-tailored insights.
 import { q, parseJson } from './db.js';
 import { sevRank } from './vocab.js';
+import { translator } from './i18n.js';
 
 const DAY = 86400000;
 const daysAgo = (iso) => Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / DAY));
 const PM_INTERVAL = 500;
+// A vocabulary name inside a sentence: lower-cased in English and Spanish (acronyms kept), as is in Hindi.
+const lowerName = (tt, name) => (tt.lang === 'hi' ? tt.v(name) : String(tt.v(name)).replace(/(?<![\p{L}\p{N}])\p{Lu}\p{Ll}+(?![\p{L}\p{N}])/gu, (w) => w.toLowerCase()));
+const DOC_KIND = { spec_sheet: 'Spec sheet', policy: 'Policy', service_bulletin: 'Service bulletin', manual: 'Manual' };
 
 export function normalizeAssetId(raw) {
   let s = String(raw || '').toUpperCase().trim();
@@ -88,10 +92,11 @@ export function fixesForModel(model) {
   return q.all('SELECT * FROM fixes WHERE model = ? OR model IS NULL ORDER BY (success + 1.0) / (success + fail + 2.0) DESC LIMIT 12', model);
 }
 
-/** Durable facts this machine "remembers", distilled from its history and the fleet. */
-export function assetMemory(assetId) {
+/** Durable facts this machine "remembers", distilled from its history and the fleet, worded in `lang`. */
+export function assetMemory(assetId, lang = 'en') {
   const asset = getAsset(assetId);
   if (!asset) return [];
+  const tt = translator(lang);
   const facts = [];
   const reports = q.all(`SELECT * FROM reports WHERE asset_id = ? ORDER BY created_at DESC LIMIT 200`, assetId).map(hydrateReport);
 
@@ -106,7 +111,7 @@ export function assetMemory(assetId) {
     v.n++; recur.set(k, v);
   }
   for (const v of recur.values()) {
-    if (v.n >= 2) facts.push({ kind: 'pattern', level: v.n >= 3 ? 'high' : 'medium', text: `Recurring ${v.s.toLowerCase()} on ${v.c.toLowerCase()} — ${v.n}× in 90 days (last ${daysAgo(v.last)}d ago)` });
+    if (v.n >= 2) facts.push({ kind: 'pattern', level: v.n >= 3 ? 'high' : 'medium', part: v.c, text: tt('Recurring {problem} on {part} — {n}× in 90 days (last {days}d ago)', { problem: lowerName(tt, v.s), part: lowerName(tt, v.c), n: v.n, days: daysAgo(v.last) }) });
   }
 
   // Environmental correlations (symptom co-occurs with a condition ≥ 2 times)
@@ -120,7 +125,7 @@ export function assetMemory(assetId) {
     }
   }
   for (const [k, n] of env) {
-    if (n >= 2) { const [s, c] = k.split('|'); facts.push({ kind: 'environment', level: 'medium', text: `${s} tends to show up under ${c.toLowerCase()} (${n} reports)` }); }
+    if (n >= 2) { const [s, c] = k.split('|'); facts.push({ kind: 'environment', level: 'medium', text: tt('{problem} tends to show up under {condition} ({reports})', { problem: tt.v(s), condition: lowerName(tt, c), reports: tt('{n} reports', { n }) }) }); }
   }
 
   // Fleet patterns this machine is part of
@@ -129,27 +134,28 @@ export function assetMemory(assetId) {
       WHERE r.asset_id = ? AND c.status <> 'closed' ORDER BY c.last_seen DESC`, assetId);
   for (const c of cases) {
     const machines = q.get(`SELECT COUNT(DISTINCT r.asset_id) AS n FROM case_reports cr JOIN reports r ON r.id = cr.report_id WHERE cr.case_id = ?`, c.id).n;
-    facts.push({ kind: 'fleet', level: c.priority === 'P1' ? 'high' : 'medium', caseId: c.id, text: `Part of fleet pattern "${c.title}" — ${c.occurrences} reports on ${machines} machine${machines === 1 ? '' : 's'} (CAT Engineering: ${c.status.replace(/_/g, ' ')})` });
-    if (c.quick_fix) facts.push({ kind: 'bulletin', level: 'info', caseId: c.id, text: `CAT quick fix available: ${c.quick_fix}` });
+    facts.push({ kind: 'fleet', level: c.priority === 'P1' ? 'high' : 'medium', caseId: c.id, text: tt('Part of fleet pattern "{title}" — {reports} on {machines} (CAT Engineering: {status})', {
+      title: c.title, reports: c.occurrences === 1 ? tt('1 report') : tt('{n} reports', { n: c.occurrences }), machines: machines === 1 ? tt('1 machine') : tt('{n} machines', { n: machines }), status: tt(c.status.replace(/_/g, ' ')),
+    }) });
+    if (c.quick_fix) facts.push({ kind: 'bulletin', level: 'info', caseId: c.id, fix: c.quick_fix, text: tt('CAT quick fix available: {fix}', { fix: c.quick_fix }) });
   }
 
   // Service interval
   if (asset.last_service_hours != null) {
     const since = Math.round(asset.smu_hours - asset.last_service_hours);
     const due = PM_INTERVAL - since;
-    facts.push({ kind: 'service', level: due < 50 ? 'medium' : 'info', text: due > 0 ? `${since} h since last PM — next ${PM_INTERVAL} h service due in ~${due} h` : `PM overdue by ${-due} h` });
+    facts.push({ kind: 'service', level: due < 50 ? 'medium' : 'info', text: due > 0 ? tt('{since} h since last PM — next {interval} h service due in ~{due} h', { since, interval: PM_INTERVAL, due }) : tt('PM overdue by {h} h', { h: -due }) });
   }
 
   // Product documents that apply to this model (or to every machine)
   for (const d of q.all(`SELECT DISTINCT d.id, d.title, d.doc_type, d.integrated_at FROM documents d JOIN doc_models m ON m.doc_id = d.id
                          WHERE d.status = 'integrated' AND (m.model = ? OR m.model = '*') ORDER BY d.integrated_at DESC LIMIT 4`, asset.model)) {
-    const kind = { spec_sheet: 'Spec sheet', policy: 'Policy', service_bulletin: 'Service bulletin', manual: 'Manual' }[d.doc_type] || 'Document';
-    facts.push({ kind: 'document', level: 'info', docId: d.id, text: `${kind} on file: ${d.title} [D${d.id}]` });
+    facts.push({ kind: 'document', level: 'info', docId: d.id, text: tt('{kind} on file: {title} [D{id}]', { kind: tt(DOC_KIND[d.doc_type] || 'Document'), title: d.title, id: d.id }) });
   }
 
   // Stored facts (repairs, learned notes)
   for (const f of q.all('SELECT * FROM memory_facts WHERE asset_id = ? ORDER BY created_at DESC LIMIT 6', assetId)) {
-    facts.push({ kind: f.kind || 'note', level: 'info', text: `${f.fact} (${daysAgo(f.created_at)}d ago)` });
+    facts.push({ kind: f.kind || 'note', level: 'info', text: tt('{fact} ({days}d ago)', { fact: f.fact, days: daysAgo(f.created_at) }) });
   }
   const order = { high: 0, medium: 1, info: 2 };
   return facts.sort((a, b) => order[a.level] - order[b.level]);
@@ -179,11 +185,12 @@ export function recomputeAssetState(assetId) {
   return { ...asset, health, status };
 }
 
-/** Insights tailored to who is looking: operator, technician or fleet manager. */
-export function roleInsights(assetId, role = 'operator') {
+/** Insights tailored to who is looking: operator, technician or fleet manager, worded in `lang`. */
+export function roleInsights(assetId, role = 'operator', lang = 'en') {
   const asset = getAsset(assetId);
   if (!asset) return null;
-  const memory = assetMemory(assetId);
+  const tt = translator(lang);
+  const memory = assetMemory(assetId, lang);
   const reports = recentReports(assetId, 40);
   const alerts = openAlertsForAsset(assetId);
   const items = [];
@@ -193,39 +200,39 @@ export function roleInsights(assetId, role = 'operator') {
 
   if (role === 'operator') {
     for (const f of memory.filter((m) => m.kind === 'pattern')) {
-      const comp = f.text.match(/on (.+?) —/)?.[1] || 'this area';
-      push(`Walkaround focus: ${comp}`, `${f.text}. Check it before you start and report any change.`, f.level);
+      const comp = f.part ? lowerName(tt, f.part) : tt('this area');
+      push(tt('Walkaround focus: {part}', { part: comp }), tt('{fact}. Check it before you start and report any change.', { fact: f.text }), f.level);
     }
-    for (const a of alerts.slice(0, 3)) push(`Open alert: ${a.title}`, a.body || '', a.severity === 'critical' ? 'high' : 'medium');
-    for (const f of memory.filter((m) => m.kind === 'bulletin')) push('CAT quick fix in effect', f.text.replace('CAT quick fix available: ', ''), 'info');
-    if (/hot/i.test(asset.site_climate || '')) push('Hot site conditions', 'Watch coolant and hydraulic oil temperature on long climbs; idle down before shutdown and keep radiator cores clear of dust.', 'medium');
-    if (/wet|humid/i.test(asset.site_climate || '')) push('Wet ground', 'Clean mud packing from the undercarriage at end of shift and watch for soft ground near edges.', 'info');
-    if (!items.length) push('All clear', 'No recurring issues on record for this machine. Do your normal walkaround.', 'info');
+    for (const a of alerts.slice(0, 3)) push(tt('Open alert: {title}', { title: a.title }), a.body || '', a.severity === 'critical' ? 'high' : 'medium');
+    for (const f of memory.filter((m) => m.kind === 'bulletin')) push(tt('CAT quick fix in effect'), f.fix || f.text, 'info');
+    if (/hot/i.test(asset.site_climate || '')) push(tt('Hot site conditions'), tt('Watch coolant and hydraulic oil temperature on long climbs; idle down before shutdown and keep radiator cores clear of dust.'), 'medium');
+    if (/wet|humid/i.test(asset.site_climate || '')) push(tt('Wet ground'), tt('Clean mud packing from the undercarriage at end of shift and watch for soft ground near edges.'), 'info');
+    if (!items.length) push(tt('All clear'), tt('No recurring issues on record for this machine. Do your normal walkaround.'), 'info');
   } else if (role === 'technician') {
-    for (const a of alerts) push(`Work order: ${a.title}`, a.body || '', a.severity === 'critical' || a.severity === 'high' ? 'high' : 'medium');
+    for (const a of alerts) push(tt('Work order: {title}', { title: a.title }), a.body || '', a.severity === 'critical' || a.severity === 'high' ? 'high' : 'medium');
     if (lastMech) {
       const fixes = rankFixes(asset.model, lastMech.extraction.components, lastMech.extraction.symptoms);
-      for (const f of fixes) push(`Recommended fix (${f.confidence}% field success)`, `${f.title}${f.steps ? ' — ' + f.steps : ''}`, f.confidence >= 70 ? 'info' : 'medium');
-      for (const c of lastMech.extraction.likely_causes || []) push('Likely cause', c, 'medium');
+      for (const f of fixes) push(tt('Recommended fix ({pct}% field success)', { pct: f.confidence }), `${f.title}${f.steps ? ' — ' + f.steps : ''}`, f.confidence >= 70 ? 'info' : 'medium');
+      for (const c of lastMech.extraction.likely_causes || []) push(tt('Likely cause'), c, 'medium');
     }
     const codeCounts = {};
     for (const r of reports) for (const c of r.extraction.fault_codes || []) codeCounts[c] = (codeCounts[c] || 0) + 1;
     const codes = Object.entries(codeCounts).sort((a, b) => b[1] - a[1]);
-    if (codes.length) push('Fault code history', codes.map(([c, n]) => `${c} ×${n}`).join(', '), 'info');
+    if (codes.length) push(tt('Fault code history'), codes.map(([c, n]) => `${c} ×${n}`).join(', '), 'info');
     const repairs = reports.filter((r) => r.category === 'maintenance').slice(0, 3);
-    if (repairs.length) push('Recent repairs', repairs.map((r) => `${r.created_at.slice(0, 10)}: ${r.summary}`).join(' · '), 'info');
-    for (const f of memory.filter((m) => m.kind === 'environment')) push('Environmental correlation', f.text, 'info');
+    if (repairs.length) push(tt('Recent repairs'), repairs.map((r) => `${r.created_at.slice(0, 10)}: ${r.summary}`).join(' · '), 'info');
+    for (const f of memory.filter((m) => m.kind === 'environment')) push(tt('Environmental correlation'), f.text, 'info');
   } else {
     const last30 = reports.filter((r) => daysAgo(r.created_at) <= 30);
     const serious = last30.filter((r) => sevRank(r.severity) >= 2 && r.category === 'mechanical').length;
     const downtimeH = alerts.reduce((h, a) => h + ({ critical: 16, high: 6, medium: 2 }[a.severity] || 0), 0);
-    push('Health score', `${asset.health}/100 — status ${asset.status}. ${serious} high/critical mechanical reports in the last 30 days.`, asset.health < 60 ? 'high' : asset.health < 80 ? 'medium' : 'info');
-    push('Downtime risk (est.)', downtimeH ? `~${downtimeH} h of repair work queued from open alerts.` : 'No open repair work.', downtimeH > 8 ? 'high' : 'info');
+    push(tt('Health score'), tt('{health}/100 — status {status}. {n} high/critical mechanical reports in the last 30 days.', { health: asset.health, status: tt(asset.status), n: serious }), asset.health < 60 ? 'high' : asset.health < 80 ? 'medium' : 'info');
+    push(tt('Downtime risk (est.)'), downtimeH ? tt('~{h} h of repair work queued from open alerts.', { h: downtimeH }) : tt('No open repair work.'), downtimeH > 8 ? 'high' : 'info');
     const svc = memory.find((m) => m.kind === 'service');
-    if (svc) push('Service plan', svc.text, svc.level);
-    for (const f of memory.filter((m) => m.kind === 'fleet')) push('Fleet-wide issue', f.text, f.level);
+    if (svc) push(tt('Service plan'), svc.text, svc.level);
+    for (const f of memory.filter((m) => m.kind === 'fleet')) push(tt('Fleet-wide issue'), f.text, f.level);
     const age = new Date().getFullYear() - (asset.year || new Date().getFullYear());
-    push('Lifecycle', `${age} yr old, ${Math.round(asset.smu_hours).toLocaleString()} SMU hours, ${reports.length} memory entries recorded.`, 'info');
+    push(tt('Lifecycle'), tt('{age} yr old, {hours} SMU hours, {n} memory entries recorded.', { age, hours: Math.round(asset.smu_hours).toLocaleString('en-US'), n: reports.length }), 'info');
   }
   return { role, items };
 }

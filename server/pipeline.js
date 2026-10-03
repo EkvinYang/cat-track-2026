@@ -11,8 +11,10 @@ import { extractObservation, modelExtract } from './extract.js';
 import { llmEnabled, llmInfo, describeLlmError } from './llm.js';
 import { searchDocs } from './docs.js';
 import { answerNow } from './agent.js';
+import { diagnose } from './diagnose.js';
 import { ROLES } from './vocab.js';
 import { componentSystem, sevRank, issueClass } from './vocab.js';
+import { detectLang, translator } from './i18n.js';
 import {
   getAsset, recentReports, recallSimilar, rankFixes, fixesForModel, recomputeAssetState, normalizeAssetId, hydrateReport,
 } from './memory.js';
@@ -21,6 +23,7 @@ import { publish } from './events.js';
 export { HttpError };
 
 const ROLE_LABEL = { operator: 'Operators', technician: 'Technicians', site_manager: 'Site manager', safety_officer: 'Safety officer', fleet_manager: 'Fleet manager' };
+const ROLE_ONE = { operator: 'Operator', technician: 'Technician', site_manager: 'Site manager', safety_officer: 'Safety officer', fleet_manager: 'Fleet manager' };
 
 function savePhoto(dataUrl) {
   const m = /^data:(image\/(jpeg|png|webp));base64,(.+)$/s.exec(dataUrl || '');
@@ -69,6 +72,9 @@ async function processReport(input, run) {
     run.announced = true;
   }
   const photo = input.photo ? savePhoto(input.photo) : null;
+  // The language the note is in (script and marker words; the screen's language breaks ties). What
+  // the reporter said and what the engine says back stay in that language; entity keys stay English.
+  const lang = input.forceRules && !input.lang ? 'en' : detectLang(text, input.lang);
 
   // 1. Understand: what happened, and what does the person want done? Live reports go to the AI
   //    first (with a time limit); the rule engine answers if it's off, slow or fails. Seeded history,
@@ -76,7 +82,7 @@ async function processReport(input, run) {
   const history = recentReports(asset.id, 12);
   const openAlerts = q.all(`SELECT id, title, severity, kind, report_id, created_at FROM alerts WHERE asset_id = ? AND status <> 'resolved' ORDER BY created_at DESC LIMIT 8`, asset.id);
   const extractCtx = {
-    assetId: asset.id, asset, siteName: asset.site_name, siteClimate: asset.site_climate,
+    assetId: asset.id, asset, siteName: asset.site_name, siteClimate: asset.site_climate, lang,
     reporter: person?.name, reporterRole: person?.role, source, history, openAlerts,
     fixes: fixesForModel(asset.model), photo: photo ? { mediaType: photo.mediaType, data: photo.data } : null,
     docs: searchDocs(text, { model: asset.model, limit: 2, excerpt: 600 }),
@@ -98,7 +104,7 @@ async function processReport(input, run) {
   const intent = live ? ex.intent || 'new_issue' : 'record';
   // A request to delete earlier reports files nothing new: it only takes reports off the record.
   if (intent === 'delete_report') {
-    const out = handleDeleteRequest({ text, ex, asset, person });
+    const out = handleDeleteRequest({ text, ex, asset, person, lang });
     if (!input.silent) publish('report-handled', { rid: run.rid, intent, asset_id: asset.id, site_id: asset.site_id, deleted: out.deleted.map((d) => d.id), asking: Boolean(out.needsChoice) });
     return out;
   }
@@ -118,10 +124,10 @@ async function processReport(input, run) {
   const result = tx(() => {
     // 3. Remember: persist the report and weave it into the knowledge graph.
     const ins = q.run(
-      `INSERT INTO reports (asset_id, site_id, person_id, source, raw_text, photo_path, category, severity, summary, extraction, ai_mode, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO reports (asset_id, site_id, person_id, source, raw_text, photo_path, category, severity, summary, extraction, ai_mode, created_at, lang)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       asset.id, asset.site_id, person?.id, source, text, photo?.url, ex.category, ex.severity, ex.summary,
-      { ...ex, similar: similar.map((s) => ({ id: s.id, score: s.score, reasons: s.reasons })) }, ex.ai_mode, createdAt);
+      { ...ex, lang, similar: similar.map((s) => ({ id: s.id, score: s.score, reasons: s.reasons })) }, ex.ai_mode, createdAt, lang);
     const reportId = Number(ins.lastInsertRowid);
 
     const { rNode, mNode, compNodes } = weaveReport({ reportId, ex, asset, person, source, createdAt, similar, delta });
@@ -176,7 +182,7 @@ async function processReport(input, run) {
         asset.site_id, asset.id, reportId, engCase?.id, kind, ex.severity, `${asset.id} · ${ex.summary}`, body, audience, createdAt, createdAt);
       alert = alertRow(q.get('SELECT * FROM alerts WHERE id = ?', Number(ar.lastInsertRowid)));
       const items = [...(ex.action_items || [])];
-      if (fixes[0] && fixes[0].confidence >= 50) items.push({ assignee_role: 'technician', text: `Try what worked before: ${fixes[0].title} (worked ${fixes[0].success} of ${fixes[0].success + fixes[0].fail} times)` });
+      if (fixes[0] && fixes[0].confidence >= 50) items.push({ assignee_role: 'technician', text: translator(lang)('Try what worked before: {fix} (worked {n} of {total} times)', { fix: fixes[0].title, n: fixes[0].success, total: fixes[0].success + fixes[0].fail }) });
       for (const it of items.slice(0, 7)) {
         const r = q.run(`INSERT INTO action_items (alert_id, site_id, asset_id, text, assignee_role, status, created_at) VALUES (?, ?, ?, ?, ?, 'open', ?)`,
           alert.id, asset.site_id, asset.id, it.text, it.assignee_role || 'site_manager', createdAt);
@@ -189,42 +195,59 @@ async function processReport(input, run) {
 
   // 6. Act on what the person asked for.
   const did = []; let needsChoice = null; let answer = null; let advice = [];
+  const tt = translator(lang);
   if (live) {
     if (intent === 'resolved') {
       if (target) {
         const closed = closeAlert(target.id, { personId: person?.id, resolution: ex.resolution || text, viaReportId: result.reportId });
-        did.push({ kind: 'resolved', text: `Closed the open issue “${target.title}”, with its tasks.`, alertId: target.id });
-        if (closed.learnedFixId) did.push({ kind: 'learned', text: `Saved “${clip(ex.resolution || text, 90)}” as a known fix for ${asset.model}.` });
+        did.push({ kind: 'resolved', text: tt('Closed the open issue “{title}”, with its tasks.', { title: target.title }), alertId: target.id });
+        if (closed.learnedFixId) did.push({ kind: 'learned', text: tt('Saved “{fix}” as a known fix for {model}.', { fix: clip(ex.resolution || text, 90), model: asset.model }) });
       } else if (openAlerts.length) {
-        needsChoice = { kind: 'resolve', reportId: result.reportId, prompt: 'Which issue did you fix?', options: openAlerts.map((a) => ({ id: a.id, title: a.title, severity: a.severity, created_at: a.created_at })) };
-        did.push({ kind: 'note', text: `${asset.id} has ${openAlerts.length} open issues — pick the one you fixed so it can be closed.` });
+        needsChoice = { kind: 'resolve', reportId: result.reportId, prompt: tt('Which issue did you fix?'), options: openAlerts.map((a) => ({ id: a.id, title: a.title, severity: a.severity, created_at: a.created_at })) };
+        did.push({ kind: 'note', text: tt('{id} has {n} open issues — pick the one you fixed so it can be closed.', { id: asset.id, n: openAlerts.length }) });
       } else {
-        did.push({ kind: 'note', text: `No open issue on ${asset.id} to close — saved as a repair record.` });
+        did.push({ kind: 'note', text: tt('No open issue on {id} to close — saved as a repair record.', { id: asset.id }) });
       }
     }
     if (asUpdate) {
       updateOpenAlert(target.id, ex, person);
-      did.push({ kind: 'updated', text: `Added this to the open issue “${target.title}” instead of opening a new one.`, alertId: target.id });
+      did.push({ kind: 'updated', text: tt('Added this to the open issue “{title}” instead of opening a new one.', { title: target.title }), alertId: target.id });
     } else if (intent === 'update_existing') {
-      did.push({ kind: 'note', text: 'No matching open issue, so this was filed as a new one.' });
+      did.push({ kind: 'note', text: tt('No matching open issue, so this was filed as a new one.') });
     }
     if (intent === 'correction') {
       const wrong = pickCorrectedReport(ex, history, person, result.reportId);
       if (wrong) {
         retractReport(wrong.id, person, text);
-        did.push({ kind: 'retracted', text: `Withdrew your earlier report “${wrong.summary}” and removed it from its alerts and engineering case.`, reportId: wrong.id });
-      } else did.push({ kind: 'note', text: 'Couldn’t tell which earlier report this corrects, so nothing was withdrawn.' });
+        did.push({ kind: 'retracted', text: tt('Withdrew your earlier report “{summary}” and removed it from its alerts and engineering case.', { summary: wrong.summary }), reportId: wrong.id });
+      } else did.push({ kind: 'note', text: tt('Couldn’t tell which earlier report this corrects, so nothing was withdrawn.') });
     }
     if ((intent === 'request_help' || (ex.help_role && ex.help_role !== 'none' && ex.help_request)) && ex.help_request) {
       const h = requestHelp(asset, person, ex, result.alert, result.reportId);
-      did.push({ kind: 'help', text: `Asked the ${ROLE_LABEL[h.role] ? ROLE_LABEL[h.role].toLowerCase().replace(/s$/, '') : h.role} for: ${clip(ex.help_request, 100)}`, alertId: h.alertId });
+      const who = tt.lower(ROLE_ONE[h.role] || h.role);
+      did.push({ kind: 'help', text: tt('Asked the {who} for: {what}', { who, what: clip(ex.help_request, 100) }), alertId: h.alertId });
     }
     if (intent === 'question') {
-      const a = await answerNow({ question: text, assetId: asset.id, personId: person?.id, role: person?.role || 'operator' });
+      const a = await answerNow({ question: text, assetId: asset.id, personId: person?.id, role: person?.role || 'operator', lang });
       answer = { text: a.answer, mode: a.mode, model: a.model || null, trace: a.trace || [] };
     }
     if (ex.wants_advice || ex.advice_steps?.length || intent === 'request_advice') {
-      advice = ex.advice_steps?.length ? ex.advice_steps : ruleAdvice(ex, fixes);
+      advice = ex.advice_steps?.length ? ex.advice_steps : ruleAdvice(ex, fixes, tt);
+    }
+  }
+
+  // 7. Diagnose: follow the error through the knowledge graph to a component, a pattern and a
+  //    solution (from the record, or reasoned out by the AI when the record has none), in the
+  //    report's language. The likely fix goes onto the crew alert.
+  let diagnosis = null;
+  if (live && !['resolved', 'routine_log', 'correction'].includes(intent) && (hasProblem || (ex.fault_codes || []).length)) {
+    try { diagnosis = await diagnose({ ex, asset, text, reportId: result.reportId, lang }, { timeoutMs: DIAG_TIMEOUT_MS }); }
+    catch (err) { console.warn('[ingest] diagnosis failed:', err.message); }
+    if (diagnosis) {
+      const stored = parseJson(q.get('SELECT extraction FROM reports WHERE id = ?', result.reportId)?.extraction, {});
+      q.run('UPDATE reports SET extraction = ? WHERE id = ?', { ...stored, diagnosis }, result.reportId);
+      ex.diagnosis = diagnosis;
+      if (result.alert) result.alert = setLikelyFix(result.alert.id, diagnosis) || result.alert;
     }
   }
 
@@ -238,13 +261,13 @@ async function processReport(input, run) {
   if (result.alert) {
     const byRole = {};
     for (const p of result.recipients) (byRole[p.role] ||= []).push(p.name);
-    routed.push({ to: `${asset.site_name} crew`, detail: Object.entries(byRole).map(([r, names]) => `${ROLE_LABEL[r] || r}: ${names.join(', ')}`).join(' · '), count: result.recipients.length });
+    routed.push({ kind: 'crew', to: tt('{site} crew', { site: asset.site_name }), detail: Object.entries(byRole).map(([r, names]) => `${tt.v(ROLE_LABEL[r] || r)}: ${names.join(', ')}`).join(' · '), count: result.recipients.length });
   }
-  if (result.engCase) routed.push({ to: 'CAT Engineering', detail: `Case #${result.engCase.id} · ${result.engCase.title} · ${result.engCase.occurrences} fleet report(s) · ${result.engCase.priority}`, count: 1 });
+  if (result.engCase) routed.push({ kind: 'engineering', to: tt('CAT Engineering'), detail: tt('Case #{id} · {title} · {n} fleet report(s) · {priority}', { id: result.engCase.id, title: result.engCase.title, n: result.engCase.occurrences, priority: result.engCase.priority }), count: 1 });
 
   const out = {
     report, extraction: ex, asset: { ...getAsset(asset.id), ...assetState }, alert: result.alert, actions: result.actions,
-    engCase: result.engCase, similar, fixes, routed, intent, did, advice, answer, needsChoice,
+    engCase: result.engCase, similar, fixes, routed, intent, did, advice, answer, needsChoice, diagnosis,
     graph: { newNodes: graphDelta.nodes.filter((n) => n.isNew).length, newEdges: graphDelta.edges.filter((e) => e.isNew).length, reinforced: graphDelta.edges.filter((e) => !e.isNew).length + graphDelta.nodes.filter((n) => !n.isNew).length },
   };
 
@@ -266,12 +289,53 @@ async function processReport(input, run) {
   return out;
 }
 
-function alertBody(guidance, fix, engCase) {
+function alertBody(guidance, fix, engCase, diagnosis = null) {
   return [
     guidance,
     fix ? `What worked before: ${fix.title} (${fix.success} of ${fix.success + fix.fail} times).` : '',
     engCase ? `Sent to CAT Engineering as case #${engCase.id}, now ${engCase.occurrences} report${engCase.occurrences === 1 ? '' : 's'} across the fleet.` : '',
+    likelyFixLine(diagnosis),
   ].filter(Boolean).join(' ');
+}
+
+// The diagnosis' fix, last on the alert's first line (the screens read it from there). Standard
+// checks aren't a fix, so they're left off.
+const LIKELY_FROM = { cat: 'CAT quick fix', fix: 'worked before', document: 'service document', ai: 'AI-reasoned' };
+const likelyFixLine = (d) => (d?.solution && LIKELY_FROM[d.solution.source] ? `Likely fix (${LIKELY_FROM[d.solution.source]}): ${clip(d.solution.title, 140).replace(/\.$/, '')}.` : '');
+const LIKELY_RE = /\s*Likely fix \([^)]*\):.*$/;
+
+/** Put (or replace) the likely fix on the open alert a report raised. Returns the updated alert, or null. */
+function setLikelyFix(alertId, diagnosis) {
+  const a = q.get('SELECT * FROM alerts WHERE id = ?', alertId);
+  if (!a || a.status === 'resolved') return null;
+  const [head, ...updates] = String(a.body || '').split('\n');
+  const line = likelyFixLine(diagnosis);
+  const body = [[head.replace(LIKELY_RE, ''), line].filter(Boolean).join(' '), ...updates].join('\n');
+  if (body === a.body) return alertRow(a);
+  q.run('UPDATE alerts SET body = ? WHERE id = ?', body, alertId);
+  return alertRow(q.get('SELECT * FROM alerts WHERE id = ?', alertId));
+}
+
+/**
+ * Diagnose a stored report (the report log's "Diagnose" button, or after the model review named a part
+ * or code the rule engine missed), save it, refresh the alert's likely fix and tell the screens. It is
+ * written in `lang` when someone asked for it from a screen, otherwise in the report's own language.
+ */
+export async function diagnoseReport(reportId, { lang = null } = {}) {
+  const row = q.get('SELECT * FROM reports WHERE id = ?', reportId);
+  if (!row) throw new HttpError(404, 'Report not found.');
+  const ex = parseJson(row.extraction, {});
+  const asset = getAsset(row.asset_id);
+  const diagnosis = asset && !ex.retracted ? await diagnose({ ex, asset, text: row.raw_text, reportId, lang: lang || row.lang || ex.lang || 'en' }, { timeoutMs: DIAG_TIMEOUT_MS }) : null;
+  if (!diagnosis) throw new HttpError(400, ex.retracted ? 'This report was withdrawn, so there is nothing to diagnose.' : 'Nothing to diagnose: the report names no part, problem or fault code.');
+  const now = q.get('SELECT extraction FROM reports WHERE id = ?', reportId);
+  if (!now) throw new HttpError(404, 'Report not found.'); // deleted while the diagnosis ran
+  q.run('UPDATE reports SET extraction = ? WHERE id = ?', { ...parseJson(now.extraction, {}), diagnosis }, reportId);
+  const alertRowNow = q.get(`SELECT id FROM alerts WHERE report_id = ? AND status <> 'resolved' ORDER BY id LIMIT 1`, reportId);
+  const alert = alertRowNow ? setLikelyFix(alertRowNow.id, diagnosis) : null;
+  publish('report-updated', { reportId, status: 'diagnosed', report: reportWithPerson(reportId) });
+  if (alert) publish('alert-updated', { alert });
+  return diagnosis;
 }
 
 const reportWithPerson = (id) => hydrateReport(q.get(`SELECT r.*, p.name AS person_name, p.role AS person_role FROM reports r LEFT JOIN people p ON p.id = r.person_id WHERE r.id = ?`, id));
@@ -360,7 +424,7 @@ async function reviewReport(reportId, text, ctx) {
       const engCase = q.get('SELECT c.* FROM eng_cases c JOIN case_reports cr ON cr.case_id = c.id WHERE cr.report_id = ?', reportId);
       const fix = rankFixes(row.model, merged.components, merged.symptoms)[0];
       const raise = sevRank(severity) > sevRank(existing.severity) ? severity : existing.severity;
-      q.run('UPDATE alerts SET title = ?, body = ?, severity = ?, updated_at = ? WHERE id = ?', `${row.asset_id} · ${merged.summary}`, alertBody(merged.operator_guidance, fix, engCase), raise, at, existing.id);
+      q.run('UPDATE alerts SET title = ?, body = ?, severity = ?, updated_at = ? WHERE id = ?', `${row.asset_id} · ${merged.summary}`, alertBody(merged.operator_guidance, fix, engCase, merged.diagnosis), raise, at, existing.id);
       alert = alertRow(q.get('SELECT * FROM alerts WHERE id = ?', existing.id));
     }
   });
@@ -370,6 +434,11 @@ async function reviewReport(reportId, text, ctx) {
   if (delta.nodes.length || delta.edges.length) publish('graph', delta);
   if (alert) publish('alert-updated', { alert });
   if (state) publish('asset', { ...getAsset(row.asset_id), ...state });
+  // The review named a part, problem or code the rule engine missed: follow it through the graph again.
+  const named = added.components.length || added.symptoms.length || added.fault_codes.length;
+  if (named && (base.diagnosis || !['resolved', 'routine_log', 'correction', 'delete_report'].includes(base.intent || 'new_issue'))) {
+    diagnoseReport(reportId).catch((err) => console.warn(`[review] report ${reportId}: diagnosis refresh failed (${err.message})`));
+  }
 }
 
 /** Engineering → field: publish a quick fix, remember it as a fix, and alert every site running that model. */
@@ -491,6 +560,7 @@ export function resolveFromReport(reportId, alertId, personId) {
 
 const clip = (s, n) => { const t = String(s || '').replace(/\s+/g, ' ').trim(); return t.length > n ? t.slice(0, n - 1) + '…' : t; };
 const SYNC_TIMEOUT_MS = Number(process.env.AI_SYNC_TIMEOUT_MS) || 15_000;
+const DIAG_TIMEOUT_MS = Number(process.env.AI_DIAG_TIMEOUT_MS) || 12_000;
 const REPAIR_ACTION_RE = /\b(replac|clean|blew|blow|tighten|adjust|re-?rout|install|bled|bleed|flush|calibrat|repair|swap|weld|seal|torqu|patch|reset|topped|top up|grease|lubricat|clamp|sleeve|rebuil|realign|recharg|changed|fitted|refill)/i;
 
 /** Which open alert a "fixed" / "update" report is about: the AI's pick, else the only candidate, else a part match. */
@@ -520,7 +590,8 @@ function pickCorrectedReport(ex, history, person, newId) {
 const MAX_VOICE_DELETE = 3; // more than this from one sentence needs a tap to confirm
 
 /** "Delete my last report": work out which report(s) are meant, take them off the record, or ask. */
-function handleDeleteRequest({ text, ex, asset, person }) {
+function handleDeleteRequest({ text, ex, asset, person, lang = 'en' }) {
+  const tt = translator(lang);
   const onMachine = (id) => q.get('SELECT r.*, p.name AS person_name FROM reports r LEFT JOIN people p ON p.id = r.person_id WHERE r.id = ? AND r.asset_id = ?', id, asset.id);
   let targets = [...new Set(ex.delete_report_ids || [])].map(onMachine).filter(Boolean);
   let candidates = []; let why = null;
@@ -538,18 +609,18 @@ function handleDeleteRequest({ text, ex, asset, person }) {
     graph: { newNodes: 0, newEdges: 0, reinforced: 0 },
   };
   if (targets.length > MAX_VOICE_DELETE) {
-    out.needsChoice = { kind: 'delete', confirm: true, prompt: `Delete these ${targets.length} reports?`, options: targets.map(reportOption) };
-    out.did.push({ kind: 'note', text: `That matches ${targets.length} reports on ${asset.id}. Nothing is deleted until you confirm.` });
+    out.needsChoice = { kind: 'delete', confirm: true, prompt: tt('Delete these {n} reports?', { n: targets.length }), options: targets.map(reportOption) };
+    out.did.push({ kind: 'note', text: tt('That matches {n} reports on {id}. Nothing is deleted until you confirm.', { n: targets.length, id: asset.id }) });
     return out;
   }
   if (targets.length) {
-    const d = deleteReports(targets.map((t) => t.id), { personId: person?.id, reason: text, via: 'voice' });
+    const d = deleteReports(targets.map((t) => t.id), { personId: person?.id, reason: text, via: 'voice', lang });
     return { ...out, deleted: d.deleted, did: d.did, asset: getAsset(asset.id) };
   }
   const options = (candidates.length ? candidates : recentReports(asset.id, 5)).map(reportOption);
-  if (!options.length) { out.did.push({ kind: 'note', text: `${asset.id} has nothing on record to delete.` }); return out; }
-  out.needsChoice = { kind: 'delete', prompt: 'Which report should be deleted?', options };
-  out.did.push({ kind: 'note', text: why === 'ambiguous' ? `More than one report on ${asset.id} fits. Pick the one to delete.` : `Couldn’t tell which report on ${asset.id} you meant. Pick it below, or say it again with the part or the day.` });
+  if (!options.length) { out.did.push({ kind: 'note', text: tt('{id} has nothing on record to delete.', { id: asset.id }) }); return out; }
+  out.needsChoice = { kind: 'delete', prompt: tt('Which report should be deleted?'), options };
+  out.did.push({ kind: 'note', text: why === 'ambiguous' ? tt('More than one report on {id} fits. Pick the one to delete.', { id: asset.id }) : tt('Couldn’t tell which report on {id} you meant. Pick it below, or say it again with the part or the day.', { id: asset.id }) });
   return out;
 }
 
@@ -590,7 +661,11 @@ function updateOpenAlert(alertId, ex, person) {
   const at = nowIso();
   const sev = sevRank(ex.severity) > sevRank(a.severity) ? ex.severity : a.severity;
   const stamp = new Date(at).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
-  const body = `${a.body || ''}\nUpdate ${stamp}${person ? ` from ${person.name}` : ''}: ${ex.summary}.${ex.operator_guidance ? ' ' + ex.operator_guidance : ''}`.slice(-1800);
+  // Keep the first line (what to do, what worked, the likely fix) and drop the oldest updates past 1800 characters.
+  const [head, ...updates] = String(a.body || '').split('\n');
+  updates.push(`Update ${stamp}${person ? ` from ${person.name}` : ''}: ${ex.summary}.${ex.operator_guidance ? ' ' + ex.operator_guidance : ''}`);
+  while (updates.length > 1 && [head, ...updates].join('\n').length > 1800) updates.shift();
+  const body = [head, ...updates].join('\n').slice(0, 2400);
   q.run(`UPDATE alerts SET severity = ?, body = ?, status = 'open', updated_at = ? WHERE id = ?`, sev, body, at, alertId);
   for (const it of (ex.action_items || []).slice(0, 3)) {
     const dup = q.get(`SELECT id FROM action_items WHERE alert_id = ? AND status = 'open' AND lower(text) = lower(?)`, alertId, it.text);
@@ -617,12 +692,12 @@ function requestHelp(asset, person, ex, existingAlert, reportId) {
 }
 
 /** Offline next steps: the operator-facing guidance and tasks, plus what worked before. */
-function ruleAdvice(ex, fixes) {
+function ruleAdvice(ex, fixes, tt = translator('en')) {
   const steps = [];
   if (ex.operator_guidance) steps.push(ex.operator_guidance);
   for (const a of (ex.action_items || []).filter((x) => x.assignee_role === 'operator')) steps.push(a.text);
-  if (fixes?.[0]) steps.push(`Tell the technician what worked before: ${fixes[0].title}.`);
-  if (!steps.length) steps.push('Stop if anything looks unsafe, then describe the problem in a report so the right person is alerted.');
+  if (fixes?.[0]) steps.push(tt('Tell the technician what worked before: {fix}.', { fix: fixes[0].title }));
+  if (!steps.length) steps.push(tt('Stop if anything looks unsafe, then describe the problem in a report so the right person is alerted.'));
   return [...new Set(steps)].slice(0, 4);
 }
 

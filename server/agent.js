@@ -4,9 +4,10 @@
 import { q, nowIso, parseJson, alertRow } from './db.js';
 import { runToolAgent, complete, llmEnabled, llmInfo, agentMode, contextChars, describeLlmError } from './llm.js';
 import { getAsset, assetMemory, recentReports, rankFixes, fixesForModel, normalizeAssetId, openAlertsForAsset } from './memory.js';
-import { matchAll, COMPONENTS, SYMPTOMS, ROLES } from './vocab.js';
+import { matchAll, COMPONENTS, SYMPTOMS, ROLES, fold } from './vocab.js';
 import { publish } from './events.js';
 import { searchDocs } from './docs.js';
+import { translator, langName, normalizeLang, detectLang } from './i18n.js';
 
 const trunc = (s, n) => (s && s.length > n ? s.slice(0, n - 1) + '…' : s || '');
 
@@ -32,7 +33,7 @@ function searchMemory({ query = '', asset_id, model, limit = 10 }) {
   return scored.sort((a, b) => b.score - a.score || b.date.localeCompare(a.date)).slice(0, Math.min(20, limit));
 }
 
-function getMachine({ asset_id }) {
+function getMachine({ asset_id }, lang = 'en') {
   const id = normalizeAssetId(asset_id);
   const a = getAsset(id);
   if (!a) return { error: `No machine with ID ${asset_id}` };
@@ -41,7 +42,7 @@ function getMachine({ asset_id }) {
   return {
     id: a.id, model: a.model, family: a.family, serial: a.serial, site: a.site_name, site_climate: a.site_climate,
     smu_hours: Math.round(a.smu_hours), status: a.status, health: a.health, last_service: a.last_service_at?.slice(0, 10), operator: a.operator_name,
-    memory: assetMemory(id).map((m) => m.text),
+    memory: assetMemory(id, lang).map((m) => m.text),
     open_alerts: openAlertsForAsset(id).map((x) => ({ id: x.id, severity: x.severity, title: x.title })),
     recent_reports: reports.map((r) => ({ id: r.id, date: r.created_at.slice(0, 10), severity: r.severity, category: r.category, summary: r.summary, by: r.person_name })),
     recommended_fixes: lastMech ? rankFixes(a.model, lastMech.extraction.components, lastMech.extraction.symptoms).map((f) => ({ title: f.title, confidence_pct: f.confidence, worked: f.success, failed: f.fail })) : [],
@@ -121,85 +122,100 @@ function systemPrompt(ctx, mode = 'tools') {
   return `You are the Cat Track memory agent: the voice of a persistent memory layer for Caterpillar machines and job sites.
 You are talking with ${who}. ${tailor}
 ${ctx.assetId ? `They are looking at machine ${ctx.assetId}; questions about "it" or "this machine" refer to it.` : ''}
+${ctx.scoped && ctx.assetId ? `Asked from the cab of ${ctx.assetId}: answer from ${ctx.assetId}'s own record (its reports, alerts, repairs, memory, service state) and documents that apply to its model. Do not bring in other machines unless the question asks about the fleet; if you mention a fix learned elsewhere, say it comes from another machine of the same model.` : ''}
 ${mode === 'rag'
     ? 'Answer ONLY from the records provided with the question. Cite reports as [R<id>], product documents as [D<id>], and machines by ID. If the records don\'t contain the answer, say so plainly. You cannot take actions in this mode; if asked to assign or notify, say which task or notice you would create.'
     : 'Always ground answers in the memory by calling tools first. Cite reports as [R<id>], product documents as [D<id>], and machines by ID. For specs, service intervals, policies or what a fault code means, search the product library. If the memory doesn\'t contain the answer, say so.\nOnly call create_action_item or notify_site when the user explicitly asks for an action; confirm what you did.'}
 Specs, intervals and rules apply only to the models, machine families or conditions they name (see applies_to and the text): never carry a figure or rule from one model over to another, and say which machine each figure is for. Don't pad answers with general advice the records don't support.
+${ctx.lang && ctx.lang !== 'en' ? `Answer in ${langName(ctx.lang)}${ctx.lang === 'hi' ? ' (Devanagari script)' : ''}, even though the records are in English. Keep machine IDs, fault codes, model numbers and citations like [R12] exactly as they are.` : ''}
 Keep answers under 170 words. Use short bullet lists when listing more than two items. Today is ${new Date().toISOString().slice(0, 10)}.`;
 }
 
 /** Offline answerer: pattern-matches the question onto the same tools. */
+// Question cues in English, Spanish and Hindi (Devanagari + Roman). Matched against the folded question.
+const Q = {
+  action: /\b(assign|schedule|create|add) (a |an )?(task|action)\b|\b(asigna|asignar|programa|programar|crea|crear|agrega|agregar|anade|anadir) (una? )?(tarea|accion)\b|(काम|टास्क|कार्य) (जोड़|जोड|बना|दे)|\b(task|kaam|kam) (jodo|jod|banao|bana|do|de)\b/,
+  tech: /\btech|tecnico|mecanico|टेक्नीशियन|मैकेनिक|technician|mistri|मिस्त्री/,
+  cases: /\bcase|engineering|fleet[- ]wide|pattern|casos?|ingenieria|patron|केस|इंजीनियरिंग|पैटर्न|\bkes\b|\bpattern\b/,
+  fleet: /\bfleet|status|down|which machines|all machines|overview|health|flota|estado|paradas?|que maquinas|todas las maquinas|resumen|salud|फ्लीट|स्थिति|बंद|कौन सी मशीन|सभी मशीन|सेहत|\bkaun si machine|\bsab machine|\bband\b|\bhalat\b/,
+  docs: /\b(spec|specs|specification|policy|policies|interval|how often|procedure|bulletin|rated|capacity|torque|pressure|horsepower|kw|weight|new product|especificacion(es)?|politicas?|intervalo|cada cuanto|procedimiento|boletin|capacidad|presion|potencia|peso|producto nuevo|spec|niyam|antaral|kitni baar|prakriya|kshamta|dabav|vajan|wazan)\b|स्पेक|नीति|अंतराल|कितनी बार|प्रक्रिया|बुलेटिन|क्षमता|टॉर्क|दबाव|प्रेशर|वज़न|वजन|नया प्रोडक्ट/,
+  code: /code|cid|fmi|codigo|कोड/,
+};
+
+/** Offline answerer: pattern-matches the question onto the same tools. */
 function rulesAnswer(question, ctx) {
-  const ql = question.toLowerCase();
+  const tt = translator(ctx.lang);
+  const ql = fold(question);
   const trace = [];
   const idMatch = question.match(/\b([A-Za-z]{2})[- ]?(\d{3,4})\b/);
   const assetId = idMatch ? normalizeAssetId(idMatch[0]) : ctx.assetId;
   const lines = [];
-  const wantsAction = /\b(assign|schedule|create|add) (a |an )?(task|action)/.test(ql);
+  const wantsAction = Q.action.test(ql);
   if (wantsAction && assetId) {
-    const r = createActionItem({ asset_id: assetId, text: question.replace(/^.*?(to|:)\s*/i, ''), assignee_role: /tech/.test(ql) ? 'technician' : 'site_manager' }, ctx);
+    const r = createActionItem({ asset_id: assetId, text: question.replace(/^.*?(to|:|para|que|को|कि)\s*/i, ''), assignee_role: Q.tech.test(ql) ? 'technician' : 'site_manager' }, ctx);
     trace.push({ tool: 'create_action_item', input: { asset_id: assetId }, ok: !r.error });
-    return { answer: r.error ? r.error : `Done — added an action item for **${assetId}** at ${r.site}.`, trace, mode: 'rules' };
+    return { answer: r.error ? r.error : tt('Done — added an action item for **{id}** at {site}.', { id: assetId, site: r.site }), trace, mode: 'rules' };
   }
-  if (/case|engineering|fleet[- ]wide|pattern/.test(ql) && !assetId) {
+  if (Q.cases.test(ql) && !assetId) {
     const cases = listCases({}); trace.push({ tool: 'list_engineering_cases', input: {}, ok: true });
-    lines.push(`**${cases.filter((c) => c.status !== 'closed').length} open CAT Engineering cases:**`);
-    for (const c of cases.slice(0, 6)) lines.push(`- **#${c.id} ${c.title}** — ${c.occurrences} reports, ${c.priority}, ${c.status.replace(/_/g, ' ')}${c.quick_fix ? ` · quick fix: ${c.quick_fix}` : ''}`);
+    lines.push(tt('**{n} open CAT Engineering cases:**', { n: cases.filter((c) => c.status !== 'closed').length }));
+    for (const c of cases.slice(0, 6)) lines.push(tt('- **#{id} {title}** — {n} reports, {priority}, {status}{fix}', { id: c.id, title: c.title, n: c.occurrences, priority: tt.v(c.priority), status: c.status.replace(/_/g, ' '), fix: c.quick_fix ? tt(' · quick fix: {fix}', { fix: c.quick_fix }) : '' }));
     return { answer: lines.join('\n'), trace, mode: 'rules' };
   }
-  if (/fleet|status|down|which machines|all machines|overview|health/.test(ql) && !assetId) {
+  if (Q.fleet.test(ql) && !assetId) {
     const f = fleetOverview({}); trace.push({ tool: 'fleet_overview', input: {}, ok: true });
     const bad = f.assets.filter((a) => a.status !== 'operational');
-    lines.push(`**${f.assets.length} machines tracked — ${bad.length} need attention:**`);
-    for (const a of bad.slice(0, 8)) lines.push(`- **${a.id}** (${a.model}, ${a.site}) — ${a.status}, health ${a.health}, ${a.open_alerts} open alert(s)`);
-    if (!bad.length) lines.push('- Everything is operational.');
+    lines.push(tt('**{n} machines tracked — {bad} need attention:**', { n: f.assets.length, bad: bad.length }));
+    for (const a of bad.slice(0, 8)) lines.push(tt('- **{id}** ({model}, {site}) — {status}, health {health}, {alerts} open alert(s)', { id: a.id, model: a.model, site: a.site, status: tt.v(a.status), health: a.health, alerts: a.open_alerts }));
+    if (!bad.length) lines.push(tt('- Everything is operational.'));
     return { answer: lines.join('\n'), trace, mode: 'rules' };
   }
-  if (/\b(spec|specs|specification|policy|policies|interval|how often|procedure|bulletin|rated|capacity|torque|pressure|horsepower|kw|weight|new product)\b/.test(ql)) {
+  if (Q.docs.test(ql)) {
     const docs = searchDocs(question, { model: assetId ? getAsset(assetId)?.model : null, limit: 3 });
     trace.push({ tool: 'search_documents', input: { query: question }, ok: true });
     if (docs.length) {
-      lines.push(`**From the product library:**`);
+      lines.push(tt('**From the product library:**'));
       for (const d of docs) lines.push(`- [D${d.doc_id}] **${d.title}** (${d.doc_type}): “${trunc(d.excerpt, 260)}”`);
       return { answer: lines.join('\n'), trace, mode: 'rules' };
     }
   }
-  const topical = matchAll(COMPONENTS, ql).length || matchAll(SYMPTOMS, ql).length || /code|cid|fmi/.test(ql);
+  const topical = matchAll(COMPONENTS, ql).length || matchAll(SYMPTOMS, ql).length || Q.code.test(ql);
   if (assetId && getAsset(assetId)) {
-    const m = getMachine({ asset_id: assetId }); trace.push({ tool: 'get_machine', input: { asset_id: assetId }, ok: true });
+    const m = getMachine({ asset_id: assetId }, ctx.lang); trace.push({ tool: 'get_machine', input: { asset_id: assetId }, ok: true });
     if (topical) {
       const hits = searchMemory({ query: question, asset_id: assetId, limit: 5 }); trace.push({ tool: 'search_memory', input: { query: question, asset_id: assetId }, ok: true });
-      lines.push(hits.length ? `**${assetId} has ${hits.length} related memory entr${hits.length === 1 ? 'y' : 'ies'}:**` : `No related reports on ${assetId}.`);
-      for (const h of hits) lines.push(`- ${h.date} [R${h.id}] ${h.summary} (${h.severity})`);
+      lines.push(hits.length ? (hits.length === 1 ? tt('**{id} has 1 related memory entry:**', { id: assetId }) : tt('**{id} has {n} related memory entries:**', { id: assetId, n: hits.length })) : tt('No related reports on {id}.', { id: assetId }));
+      for (const h of hits) lines.push(`- ${h.date} [R${h.id}] ${h.summary} (${tt.v(h.severity)})`);
     } else {
-      lines.push(`**${m.id} · ${m.model}** at ${m.site} — ${m.status}, health ${m.health}/100, ${m.smu_hours.toLocaleString()} SMU h.`);
-      if (m.memory.length) { lines.push('**What it remembers:**'); m.memory.slice(0, 4).forEach((x) => lines.push(`- ${x}`)); }
-      if (m.recent_reports.length) { lines.push('**Latest:**'); m.recent_reports.slice(0, 3).forEach((r) => lines.push(`- ${r.date} [R${r.id}] ${r.summary}`)); }
+      lines.push(tt('**{id} · {model}** at {site} — {status}, health {health}/100, {hours} SMU h.', { id: m.id, model: m.model, site: m.site, status: tt.v(m.status), health: m.health, hours: m.smu_hours.toLocaleString() }));
+      if (m.memory.length) { lines.push(tt('**What it remembers:**')); m.memory.slice(0, 4).forEach((x) => lines.push(`- ${x}`)); }
+      if (m.recent_reports.length) { lines.push(tt('**Latest:**')); m.recent_reports.slice(0, 3).forEach((r) => lines.push(`- ${r.date} [R${r.id}] ${r.summary}`)); }
     }
-    if (m.recommended_fixes.length) lines.push(`**Best known fix:** ${m.recommended_fixes[0].title} (${m.recommended_fixes[0].confidence_pct}% field success)`);
+    if (m.recommended_fixes.length) lines.push(tt('**Best known fix:** {title} ({pct}% field success)', { title: m.recommended_fixes[0].title, pct: m.recommended_fixes[0].confidence_pct }));
     return { answer: lines.join('\n'), trace, mode: 'rules' };
   }
   if (topical) {
     const modelMatch = ql.match(/\b(336|320|777|950|966|140|d6|d8)s?\b/);
     const model = modelMatch ? `Cat ${modelMatch[1].toUpperCase()}` : undefined;
     const hits = searchMemory({ query: question, model, limit: 6 }); trace.push({ tool: 'search_memory', input: { query: question, model }, ok: true });
-    lines.push(hits.length ? `**Found ${hits.length} related reports across the fleet:**` : 'Nothing in memory matches that yet.');
+    lines.push(hits.length ? tt('**Found {n} related reports across the fleet:**', { n: hits.length }) : tt('Nothing in memory matches that yet.'));
     for (const h of hits) lines.push(`- ${h.date} **${h.asset}** (${h.model}) [R${h.id}] ${h.summary}`);
     const comps = matchAll(COMPONENTS, ql); const syms = matchAll(SYMPTOMS, ql);
     if (hits[0]) {
       const fixes = rankFixes(hits[0].model, comps.length ? comps : [], syms);
-      if (fixes[0]) lines.push(`**Best known fix:** ${fixes[0].title} (${fixes[0].confidence}% field success)`);
+      if (fixes[0]) lines.push(tt('**Best known fix:** {title} ({pct}% field success)', { title: fixes[0].title, pct: fixes[0].confidence }));
     }
     return { answer: lines.join('\n'), trace, mode: 'rules' };
   }
-  return { answer: 'I can answer from the fleet memory. Try: "What\'s wrong with EX-0412?", "Which machines are down?", "Any overheating on the 777s?", or "Show engineering cases". (Configure an AI provider in .env for full natural-language answers.)', trace, mode: 'rules' };
+  return { answer: tt('I can answer from the fleet memory. Try: "What\'s wrong with EX-0412?", "Which machines are down?", "Any overheating on the 777s?", or "Show engineering cases". (Configure an AI provider in .env for full natural-language answers.)'), trace, mode: 'rules' };
 }
 
-export async function ask({ question, assetId, role = 'operator', personId }) {
+export async function ask({ question, assetId, role = 'operator', personId, lang }) {
   const qText = String(question || '').trim();
-  if (!qText) return { answer: 'Ask me anything about your machines.', trace: [], mode: 'rules' };
+  const l = detectLang(qText, lang);
+  if (!qText) return { answer: translator(l)('Ask me anything about your machines.'), trace: [], mode: 'rules' };
   const person = personId ? q.get('SELECT * FROM people WHERE id = ?', personId) : null;
-  const ctx = { role: person?.role || role, personName: person?.name, assetId: assetId ? normalizeAssetId(assetId) : null };
+  const ctx = { role: person?.role || role, personName: person?.name, assetId: assetId ? normalizeAssetId(assetId) : null, lang: l };
   const instant = rulesAnswer(qText, ctx);
   // Actions already taken by the rule path don't need a second opinion.
   if (!llmEnabled() || instant.trace.some((t) => t.tool === 'create_action_item')) return instant;
@@ -218,13 +234,14 @@ function gatherContext(question, ctx) {
   if (assetId && getAsset(assetId)) {
     parts.machine = getMachine({ asset_id: assetId }); note('get_machine', { asset_id: assetId });
     parts.this_machine_reports = searchMemory({ query: question, asset_id: assetId, limit: 8 }); note('search_memory', { asset_id: assetId });
-    parts.same_model_reports = searchMemory({ query: question, model: parts.machine.model, limit: 8 }).filter((r) => r.asset !== assetId);
+    // From the cab, other machines' reports stay out unless the question is about the fleet.
+    if (!ctx.scoped || /fleet|other machines|across|all machines/.test(ql)) parts.same_model_reports = searchMemory({ query: question, model: parts.machine.model, limit: 8 }).filter((r) => r.asset !== assetId);
   } else {
     const modelMatch = ql.match(/\b(336|320|777|950|966|140|d6|d8)s?\b/);
     const model = modelMatch ? `Cat ${modelMatch[1].toUpperCase()}` : undefined;
     parts.matching_reports = searchMemory({ query: question, model, limit: 12 }); note('search_memory', { query: question, model });
   }
-  if (!assetId || /fleet|status|down|attention|which machines|all machines|overview|health|risk/.test(ql)) { parts.fleet = fleetOverview({}); note('fleet_overview', {}); }
+  if (!assetId || (!ctx.scoped && /fleet|status|down|attention|which machines|all machines|overview|health|risk/.test(ql)) || /fleet|which machines|all machines/.test(ql)) { parts.fleet = fleetOverview({}); note('fleet_overview', {}); }
   // Repairs, fixes and engineering cases for every machine/model the matching reports touch, so the model
   // never concludes "nothing was fixed" just because the question didn't name the part.
   const hits = [...(parts.this_machine_reports || []), ...(parts.same_model_reports || []), ...(parts.matching_reports || [])];
@@ -256,10 +273,10 @@ async function modelAnswer(question, ctx) {
 }
 
 /** Answer now (awaited) — used when a field report turns out to be a question. */
-export async function answerNow({ question, assetId, role = 'operator', personId }) {
+export async function answerNow({ question, assetId, role = 'operator', personId, scoped = false, lang }) {
   const qText = String(question || '').trim();
   const person = personId ? q.get('SELECT * FROM people WHERE id = ?', personId) : null;
-  const ctx = { role: person?.role || role, personName: person?.name, assetId: assetId ? normalizeAssetId(assetId) : null };
+  const ctx = { role: person?.role || role, personName: person?.name, assetId: assetId ? normalizeAssetId(assetId) : null, scoped: Boolean(scoped), lang: normalizeLang(lang) || detectLang(qText) };
   if (!llmEnabled()) return rulesAnswer(qText, ctx);
   try {
     return { ...(await modelAnswer(qText, ctx)), mode: 'llm', model: llmInfo().label };
